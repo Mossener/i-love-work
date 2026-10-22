@@ -50,6 +50,7 @@ import { applyFigureVisibility } from "./lib/figure-visibility";
 import { captureReadingAnchor, restoreReadingAnchor, stampReadingAnchors, type ReadingAnchor } from "./lib/reading-position";
 import { useCoverDocument } from "./lib/use-cover-document";
 import { useWordPages } from "./lib/use-word-pages";
+import { canAutoCoverOnPointerLeave } from "./lib/auto-cover";
 import { PdfCanvasPage } from "./components/CoverPdfPages";
 
 const get = (key: string) => {
@@ -164,6 +165,9 @@ export default function PdfApp() {
     get("paper-pdf-figures") !== "false",
   );
   const [showImages, setShowImages] = useState(get("paper-pdf-images") !== "false");
+  const [autoCoverEnabled, setAutoCoverEnabled] = useState(
+    get("paper-pdf-auto-cover") !== "false",
+  );
   const [viewport, setViewport] = useState({
     width: innerWidth,
     height: innerHeight - 44,
@@ -224,6 +228,9 @@ export default function PdfApp() {
   const coverIsPdf = concealed && cover?.document.kind === "pdf";
   const activePaginating = concealed ? cover?.document.kind === "docx" && wordPages.paginating : paginating;
   const imageToggleDisabled = coverIsPdf || (concealed && !cover) || activePaginating || !ready;
+  const coverReady = chosenCoverPages.length > 0 && !(
+    cover?.document.kind === "docx" && wordPages.paginating
+  );
   const previousLayout = useRef({ scale, columns });
 
   useEffect(() => {
@@ -247,6 +254,7 @@ export default function PdfApp() {
     put("paper-pdf-figures", String(showFigures));
   }, [showFigures]);
   useEffect(() => { put("paper-pdf-images", String(showImages)); }, [showImages]);
+  useEffect(() => { put("paper-pdf-auto-cover", String(autoCoverEnabled)); }, [autoCoverEnabled]);
   useEffect(() => {
     if (notice) {
       const timer = setTimeout(() => setNotice(""), 6500);
@@ -489,6 +497,40 @@ export default function PdfApp() {
       );
     }
   }, [concealed, currentPage, scale, columns, chosenCoverPages.length, cover]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const onPointerLeave = (event: PointerEvent) => {
+      if (!canAutoCoverOnPointerLeave({
+        enabled: autoCoverEnabled,
+        concealed,
+        bookReady: !concealed && ready && !paginating,
+        coverReady,
+        importing,
+        coverLoading,
+        coverSettingsOpen,
+        propertiesOpen,
+        imageOpen: Boolean(image),
+        dragging,
+      }, event)) return;
+      toggleReference();
+    };
+    root.addEventListener("pointerleave", onPointerLeave);
+    return () => root.removeEventListener("pointerleave", onPointerLeave);
+  }, [
+    autoCoverEnabled,
+    concealed,
+    ready,
+    paginating,
+    coverReady,
+    importing,
+    coverLoading,
+    coverSettingsOpen,
+    propertiesOpen,
+    image,
+    dragging,
+    toggleReference,
+  ]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1085,6 +1127,17 @@ export default function PdfApp() {
             <button role="menuitem" onClick={openCoverSettings}><FolderOpen size={16} />选择遮挡文档…</button>
             <hr />
             <button role="menuitemcheckbox" aria-checked={showImages} onClick={toggleImages} disabled={imageToggleDisabled}><span className="menu-check">{showImages ? "✓" : ""}</span>显示 EPUB / Word 正文图片</button>
+            <button
+              role="menuitemcheckbox"
+              aria-checked={autoCoverEnabled}
+              onClick={() => {
+                setAutoCoverEnabled(value => !value);
+                setMenuOpen(false);
+              }}
+            >
+              <span className="menu-check">{autoCoverEnabled ? "✓" : ""}</span>
+              鼠标移出自动覆盖
+            </button>
             <button
               role="menuitemcheckbox"
               aria-checked={showFigures}
