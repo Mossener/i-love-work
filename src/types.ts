@@ -6,6 +6,8 @@ export interface BookChapter {
   text: string;
   wordCount: number;
   imageCount: number;
+  /** Linked notes and other documents outside the primary spine sequence. */
+  auxiliary?: boolean;
 }
 
 export interface BookTocItem {

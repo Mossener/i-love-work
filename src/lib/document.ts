@@ -1,6 +1,6 @@
 import type { Book } from "../types";
 import type { DocumentBlock } from "./pagination";
-import { chapterParts } from "./reading";
+import { splitChapterContent } from "./reading";
 
 export interface DocumentMetadata {
   filename: string;
@@ -201,8 +201,13 @@ export function buildDocumentBlocks(
     },
   ];
   book.chapters.forEach((chapter, chapterIndex) => {
-    const heading = `<h2 class="pdf-section-heading" data-pdf-chapter="${chapterIndex}">${chapterIndex + 1}. ${escapeText(chapter.title)}</h2>`;
-    let html = chapterParts(chapter.html, chapter.title).join("");
+    const content = splitChapterContent(chapter.html, chapter.title);
+    const sourceId =
+      content.headingId !== undefined
+        ? ` id="${escapeText(content.headingId)}"`
+        : "";
+    const heading = `<h2 class="pdf-section-heading" data-pdf-chapter="${chapterIndex}"${sourceId}>${chapterIndex + 1}. ${escapeText(chapter.title)}</h2>`;
+    let html = content.parts.join("");
     if (showFigures && chapterIndex === 0)
       html = insertAfterSecondParagraph(html, distributionFigure(book));
     if (

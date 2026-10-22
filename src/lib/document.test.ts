@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Book, BookChapter } from "../types";
 import { buildDocumentBlocks, DEFAULT_DOCUMENT_METADATA } from "./document";
+import { normalizeBlocks } from "./pagination";
 
 function chapter(title: string, html: string, wordCount = 10): BookChapter {
   return {
@@ -163,6 +164,29 @@ describe("buildDocumentBlocks", () => {
         document.querySelectorAll("h1:not(.pdf-article-title),h2"),
       ).map((heading) => heading.textContent),
     ).toEqual(["1. Methods", "Background", "Methods"]);
+  });
+
+  it.each(["h1", "h2"])("moves the replaced %s source ID to the generated chapter heading", tag => {
+    const source = book([
+      chapter("Methods", `<section><${tag} id="chapter-start">Methods</${tag}><p>First.</p><p>Second.</p><p>Third.</p></section>`),
+    ]);
+    const blocks = buildDocumentBlocks(source, DEFAULT_DOCUMENT_METADATA, false);
+    const document = documentOf(normalizeBlocks(blocks).map(block => block.html).join(""));
+    const target = document.getElementById("chapter-start");
+    expect(target?.classList.contains("pdf-section-heading")).toBe(true);
+    expect(target?.textContent).toBe("1. Methods");
+    expect(document.querySelectorAll("#chapter-start")).toHaveLength(1);
+    expect(document.querySelectorAll("p")).toHaveLength(3);
+    expect(document.querySelectorAll("h1:not(.pdf-article-title),h2")).toHaveLength(1);
+  });
+
+  it("retains and safely escapes a replaced heading ID when the chapter does not split", () => {
+    const document = rendered(book([
+      chapter("Methods", '<article><h2 id="title &quot; onmouseover=&quot;alert(1)">Methods</h2><p>Only paragraph.</p></article>'),
+    ]), false);
+    expect(document.querySelector(".pdf-section-heading")?.id).toBe('title " onmouseover="alert(1)');
+    expect(document.querySelector("[onmouseover]")).toBeNull();
+    expect(document.querySelectorAll("h2")).toHaveLength(1);
   });
 
   it("toggles only generated figures and places the distribution after the second paragraph", () => {

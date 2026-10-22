@@ -21,6 +21,11 @@ export function stampReadingAnchors(blocks: DocumentBlock[]): DocumentBlock[] {
   return normalizeBlocks(blocks).map((block, blockIndex) => {
     const template = document.createElement("template");
     template.innerHTML = block.html;
+    // XHTML files may reuse IDs such as "title" or "fn1". Keep each
+    // fragment associated with its source chapter through pagination.
+    template.content.querySelectorAll<HTMLElement>("[id]").forEach(node => {
+      node.dataset.sourceChapter = String(block.chapterIndex);
+    });
     const candidates = template.content.querySelectorAll<HTMLElement>(PROSE);
     let index = 0;
     for (const node of candidates) {

@@ -1,0 +1,69 @@
+.reader-highlight {
+  color: #242124;
+  cursor: pointer;
+  border-radius: 1px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.reader-highlight-yellow { background: #f8e589; }
+.reader-highlight-green { background: #c1e7b1; }
+.reader-highlight-blue { background: #bcdbf4; }
+.reader-highlight-pink { background: #f0c8d9; }
+.reader-marks-panel { padding: 12px 11px; color: #e0dae7; font-size: 11px; }
+.reader-mark-actions { display: flex; gap: 6px; }
+.reader-mark-actions > button,
+.reader-mark-backup > button,
+.reader-mark-edit-actions > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid #61596d;
+  border-radius: 3px;
+  padding: 8px 7px;
+  background: #3a3544;
+  color: #eee9f4;
+  font: inherit;
+}
+.reader-mark-actions > button { flex: 1; }
+.reader-mark-actions > button:hover,
+.reader-mark-backup > button:hover,
+.reader-mark-edit-actions > button:hover { background: #4b4458; }
+.reader-marks-panel button:disabled { opacity: .45; cursor: default; }
+.reader-marks-help,.reader-marks-empty { color: #aba1b8; line-height: 1.8; margin: 12px 2px; }
+.reader-mark-search,
+.reader-mark-editor textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid #61596d;
+  border-radius: 3px;
+  background: #27232e;
+  color: #f1edf5;
+  padding: 8px;
+  font: inherit;
+}
+.reader-mark-filters { display: flex; align-items: center; gap: 4px; margin: 10px 0; }
+.reader-mark-filters > button { border-radius: 3px; padding: 6px 8px; color: #bcb2c9; font: inherit; }
+.reader-mark-filters > button.selected { color: #fff; background: #51485f; }
+.reader-mark-filters > small { margin-left: auto; color: #9f94ad; white-space: nowrap; }
+.reader-mark-card { border: 1px solid #504758; border-radius: 4px; margin: 0 0 9px; overflow: hidden; }
+.reader-mark-card.selected { border-color: #a18cb9; background: #393143; }
+.reader-mark-jump { display: block; width: 100%; text-align: left; padding: 10px 9px 5px; font: inherit; }
+.reader-mark-jump:hover { background: #433b4e; }
+.reader-mark-jump > strong { display: block; color: #d5c9e4; font-size: 10px; font-weight: 500; margin-bottom: 6px; }
+.reader-mark-jump > span,.reader-mark-jump > em { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.65; }
+.reader-mark-jump > em { color: #b6a7c5; font-style: normal; margin: 7px 0 0; }
+.reader-mark-card > footer { display: flex; align-items: center; gap: 3px; padding: 0 5px 4px 9px; }
+.reader-mark-card time { margin-right: auto; color: #978ba5; font-size: 9px; }
+.reader-mark-card .pdf-tool { width: 26px; min-width: 26px; height: 25px; }
+.reader-mark-editor { border: 1px solid #6e5d80; background: #332c3e; border-radius: 4px; padding: 10px; margin: 13px 0; }
+.reader-mark-editor > label { display: block; margin-bottom: 7px; }
+.reader-mark-editor textarea { resize: vertical; line-height: 1.7; min-height: 90px; }
+.reader-mark-colors { border: 0; margin: 11px 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 9px; }
+.reader-mark-colors legend { padding: 0; margin-bottom: 8px; color: #beb1cc; font-size: 10px; }
+.reader-mark-colors label { display: flex; align-items: center; gap: 3px; font-size: 10px; }
+.reader-mark-colors input { margin: 0; }
+.reader-mark-edit-actions { display: flex; gap: 7px; justify-content: flex-end; margin-top: 9px; }
+.reader-mark-backup { display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid #504758; margin-top: 15px; padding-top: 12px; }
+.reader-mark-backup > button { padding: 7px 6px; font-size: 10px; }

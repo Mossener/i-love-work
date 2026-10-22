@@ -1,3 +1,5 @@
+import { typographyStyle, type ReaderTypography } from "./reader-preferences";
+
 export interface DocumentBlock {
   html: string;
   chapterIndex: number;
@@ -590,9 +592,10 @@ export async function paginateBlocks(
   options: {
     signal?: AbortSignal;
     onProgress?: (fraction: number) => void;
+    typography?: ReaderTypography;
   } = {},
 ): Promise<DocumentPage[]> {
-  const { signal, onProgress } = options;
+  const { signal, onProgress, typography } = options;
   checkAborted(signal);
   if (!blocks.length) return [];
   const normalized = normalizeBlocks(blocks);
@@ -619,6 +622,7 @@ export async function paginateBlocks(
     boxSizing: "border-box",
     visibility: "hidden",
     pointerEvents: "none",
+    ...(typography ? typographyStyle(typography) : {}),
   });
   document.body.append(measure);
 

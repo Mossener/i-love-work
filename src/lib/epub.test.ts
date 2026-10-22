@@ -128,6 +128,96 @@ describe("parseEpub", () => {
     );
   });
 
+  it("appends referenced nonlinear notes after primary chapters and preserves safe two-way links and images", async () => {
+    const book = await parseEpub(await epub({
+      "OPS/package.opf": packageFile(
+        item("one", "Text/one.xhtml") + item("notes", "Notes/endnotes.xhtml") +
+          item("two", "Text/two.xhtml") + item("unused", "Notes/unused.xhtml") +
+          item("figure", "Images/note.png", "image/png"),
+        '<itemref idref="one"/><itemref idref="notes" linear="no"/><itemref idref="two"/><itemref idref="unused" linear="no"/>',
+      ),
+      "OPS/Text/one.xhtml": body('<h1>One</h1><p id="ref1">Source <a href="../Notes/endnotes.xhtml#fn1">note</a>.</p>'),
+      "OPS/Text/two.xhtml": body("<h1>Two</h1><p>Primary continuation.</p>"),
+      "OPS/Notes/endnotes.xhtml": body('<h1>Notes</h1><p id="fn1">Supporting text <a href="../Text/one.xhtml#ref1">return</a>.</p><img src="../Images/note.png" onerror="alert(1)"><script>alert(2)</script>'),
+      "OPS/Notes/unused.xhtml": body("<h1>Unused appendix</h1>"),
+      "OPS/Images/note.png": new Uint8Array([137, 80, 78, 71]),
+    }));
+    expect(book.chapters.map(chapter => chapter.title)).toEqual(["One", "Two", "Notes"]);
+    const [one, two, notes] = book.chapters;
+    expect(one.id).toBe("chapter-1");
+    expect(two.id).toBe("chapter-2");
+    expect(notes.auxiliary).toBe(true);
+    expect(one.auxiliary).not.toBe(true);
+    const main = new DOMParser().parseFromString(one.html, "text/html");
+    const note = new DOMParser().parseFromString(notes.html, "text/html");
+    expect(main.querySelector("a")?.dataset.chapterId).toBe(notes.id);
+    expect(main.querySelector("a")?.dataset.fragment).toBe("fn1");
+    expect(note.querySelector("a")?.dataset.chapterId).toBe(one.id);
+    expect(note.querySelector("a")?.dataset.fragment).toBe("ref1");
+    expect(note.querySelector("script,[onerror]")).toBeNull();
+    expect(note.querySelector("img")?.getAttribute("src")).toMatch(/^blob:/);
+    expect(book.imageCount).toBe(1);
+    releaseBook(book);
+    expect(urls.size).toBe(0);
+  });
+
+  it("follows manifest HTML note references once across cycles with deterministic chapter IDs", async () => {
+    const source = await epub({
+      "OPS/package.opf": packageFile(
+        item("one", "one.xhtml") + item("two", "two.xhtml") +
+          item("note-a", "Notes/a.xhtml") + item("note-b", "Notes/b.xhtml") +
+          item("unused", "Notes/unused.xhtml"),
+        '<itemref idref="one"/><itemref idref="two"/>',
+      ),
+      "OPS/one.xhtml": body('<h1>One</h1><a href="Notes/a.xhtml#a">note</a><a href="Notes/a.xhtml#a">same note</a>'),
+      "OPS/two.xhtml": body("<h1>Two</h1>"),
+      "OPS/Notes/a.xhtml": body('<h1 id="a">Note A</h1><a href="b.xhtml#b">next note</a>'),
+      "OPS/Notes/b.xhtml": body('<h1 id="b">Note B</h1><a href="a.xhtml#a">previous note</a><a href="../one.xhtml">source</a>'),
+      "OPS/Notes/unused.xhtml": body("<h1>Unused note</h1>"),
+    });
+    const first = await parseEpub(source);
+    const second = await parseEpub(source);
+    expect(first.chapters.map(chapter => chapter.href)).toEqual([
+      "OPS/one.xhtml", "OPS/two.xhtml", "OPS/Notes/a.xhtml", "OPS/Notes/b.xhtml",
+    ]);
+    expect(first.chapters.map(chapter => chapter.id)).toEqual(second.chapters.map(chapter => chapter.id));
+    const noteA = new DOMParser().parseFromString(first.chapters[2].html, "text/html");
+    const noteB = new DOMParser().parseFromString(first.chapters[3].html, "text/html");
+    expect(noteA.querySelector("a")?.dataset.chapterId).toBe(first.chapters[3].id);
+    expect(noteB.querySelector("a")?.dataset.chapterId).toBe(first.chapters[2].id);
+    expect(noteB.querySelectorAll("a")[1].dataset.chapterId).toBe(first.chapters[0].id);
+  });
+
+  it("leaves missing, encrypted, and undeclared auxiliary documents unresolved without blocking readable text", async () => {
+    const book = await parseEpub(
+      await epub({
+        "OPS/package.opf": packageFile(
+          item("main", "main.xhtml") +
+            item("missing", "Notes/missing.xhtml") +
+            item("encrypted", "Notes/encrypted.xhtml") +
+            item("figure", "figure.png", "image/png"),
+          '<itemref idref="main"/>',
+        ),
+        "OPS/main.xhtml": body(
+          '<h1>Main</h1><p>Readable text. <a href="Notes/missing.xhtml#note">missing</a><a href="Notes/encrypted.xhtml#note">protected</a><a href="Notes/undeclared.xhtml#note">undeclared</a></p><img src="figure.png">',
+        ),
+        "OPS/Notes/encrypted.xhtml": "encrypted ciphertext",
+        "OPS/Notes/undeclared.xhtml": body('<p id="note">Undeclared content.</p>'),
+        "OPS/figure.png": new Uint8Array([137, 80, 78, 71]),
+        "META-INF/encryption.xml":
+          '<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#"><CipherData><CipherReference URI="OPS/Notes/encrypted.xhtml"/></CipherData></EncryptedData></encryption>',
+      }),
+    );
+    expect(book.chapters.map((chapter) => chapter.title)).toEqual(["Main"]);
+    const document = new DOMParser().parseFromString(book.chapters[0].html, "text/html");
+    expect(document.querySelectorAll("a")).toHaveLength(3);
+    expect(document.querySelector("a[href],a[data-chapter-id]")).toBeNull();
+    expect(book.chapters[0].text).toContain("Readable text.");
+    expect(book.imageCount).toBe(1);
+    releaseBook(book);
+    expect(urls.size).toBe(0);
+  });
+
   it("reads EPUB 2 NCX labels relative to its own directory", async () => {
     const book = await parseEpub(
       await epub({

@@ -2,11 +2,17 @@ const CONTAINERS = new Set(["DIV", "SECTION", "ARTICLE", "MAIN"]);
 const normalizedHeading = (text: string | null | undefined) =>
   (text ?? "").replace(/\s+/g, " ").trim();
 
+export interface ChapterContent {
+  parts: [string, string];
+  /** The source heading's target must move with its replacement heading. */
+  headingId?: string;
+}
+
 /** Split sanitized chapter markup without interpreting escaped text as new HTML. */
-export function chapterParts(
+export function splitChapterContent(
   html: string,
   chapterTitle?: string,
-): [string, string] {
+): ChapterContent {
   const doc = new DOMParser().parseFromString(html, "text/html");
   let parent = doc.body;
   while (
@@ -30,23 +36,39 @@ export function chapterParts(
     first?.nodeType === Node.ELEMENT_NODE &&
     ["H1", "H2"].includes((first as Element).tagName) &&
     normalizedHeading(first.textContent) === title;
+  const headingId = removeHeading
+    ? (first as Element).getAttribute("id") ?? undefined
+    : undefined;
   if (removeHeading) first.remove();
   const elements = [...parent.childNodes];
   const paragraphs = elements.filter(
     (node) => node.nodeType === 1 && (node as Element).tagName === "P",
   );
   if (paragraphs.length < 3)
-    return [removeHeading ? doc.body.innerHTML : html, ""];
+    return {
+      parts: [removeHeading ? doc.body.innerHTML : html, ""],
+      ...(headingId !== undefined ? { headingId } : {}),
+    };
   const splitAt = elements.indexOf(paragraphs[1]) + 1;
   const serialize = (nodes: ChildNode[]) => {
     const wrapper = doc.createElement("div");
     for (const node of nodes) wrapper.append(node.cloneNode(true));
     return wrapper.innerHTML;
   };
-  return [
-    serialize(elements.slice(0, splitAt)),
-    serialize(elements.slice(splitAt)),
-  ];
+  return {
+    parts: [
+      serialize(elements.slice(0, splitAt)),
+      serialize(elements.slice(splitAt)),
+    ],
+    ...(headingId !== undefined ? { headingId } : {}),
+  };
+}
+
+export function chapterParts(
+  html: string,
+  chapterTitle?: string,
+): [string, string] {
+  return splitChapterContent(html, chapterTitle).parts;
 }
 
 const SEARCH_EXCLUDED_TAGS = new Set([

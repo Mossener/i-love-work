@@ -1,5 +1,7 @@
 import {
+  memo,
   useCallback,
+  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -8,6 +10,9 @@ import {
   type CSSProperties,
 } from "react";
 import {
+  ArrowLeft,
+  ArrowRight,
+  BookmarkPlus,
   ChevronDown,
   ChevronUp,
   ChevronsRight,
@@ -52,6 +57,15 @@ import { useCoverDocument } from "./lib/use-cover-document";
 import { useWordPages } from "./lib/use-word-pages";
 import { canAutoCoverOnPointerLeave } from "./lib/auto-cover";
 import { PdfCanvasPage } from "./components/CoverPdfPages";
+import { ReaderPreferencesDialog } from "./components/ReaderPreferencesDialog";
+import { readReaderPreferences, writeReaderPreferences, typographyStyle, type ReaderPreferences } from "./lib/reader-preferences";
+import { ReaderMarksPanel } from "./components/ReaderMarksPanel";
+import { applyMarksToHtml, captureTextSelection, createBookmark, createHighlight, readMarks, writeMarks, exportMarksMarkdown, serializeMarks, importMarks, MAX_MARKS_BACKUP_BYTES, MAX_READER_MARKS, type CapturedTextSelection, type ReaderMark } from "./lib/reader-marks";
+import { findChapterFragment, readReadingProgress, writeReadingProgress, pageToProgress, progressToPage } from "./lib/reader-navigation";
+import "./reader-tools.css";
+
+const NO_MARKS: ReaderMark[] = [];
+interface NavigationLocation { anchor: ReadingAnchor | null; page: number }
 
 const get = (key: string) => {
   try {
@@ -92,7 +106,7 @@ function readAnchor(bookId: string): ReadingAnchor | null {
   } catch { return null; }
 }
 
-function PageSheet({
+const PageSheet = memo(function PageSheet({
   page,
   index,
   total,
@@ -101,6 +115,8 @@ function PageSheet({
   query,
   onContentClick,
   sourceFilename,
+  preferences,
+  marks,
 }: {
   page: DocumentPage;
   index: number;
@@ -110,10 +126,12 @@ function PageSheet({
   query: string;
   onContentClick: (event: React.MouseEvent<HTMLElement>) => void;
   sourceFilename?: string;
+  preferences?: ReaderPreferences;
+  marks: ReaderMark[];
 }) {
   const html = useMemo(
-    () => highlightHtml(page.html, query),
-    [page.html, query],
+    () => highlightHtml(applyMarksToHtml(page.html, marks), query),
+    [page.html, query, marks],
   );
   return (
     <div
@@ -122,7 +140,7 @@ function PageSheet({
       style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }}
     >
       <article
-        className="pdf-sheet"
+        className={`pdf-sheet ${preferences ? "reader-book-page" : ""}`}
         aria-label={`第 ${index + 1} 页，共 ${total} 页`}
         style={{ transform: `scale(${scale})` }}
         onClick={onContentClick}
@@ -139,23 +157,28 @@ function PageSheet({
         )}
         <div
           className={`pdf-page-body pdf-typeset ${index === 0 ? "is-first-page" : ""}`}
+          style={preferences ? typographyStyle(preferences) : undefined}
           dangerouslySetInnerHTML={{ __html: html }}
         />
         <footer className="pdf-page-footer">{index + 1}</footer>
       </article>
     </div>
   );
-}
+});
 
 export default function PdfApp() {
   const [book, setBook] = useState<Book>(paperDemoBook);
   const [library, setLibrary] = useState<SavedBook[]>([]);
   const [metadata, setMetadata] = useState<DocumentMetadata>(readMetadata);
+  const [preferences, setPreferences] = useState(readReaderPreferences);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const typography = useMemo(() => ({ fontSize: preferences.fontSize, lineHeight: preferences.lineHeight, fontFamily: preferences.fontFamily }), [preferences.fontSize, preferences.lineHeight, preferences.fontFamily]);
   const [draft, setDraft] = useState<DocumentMetadata>(metadata);
   const [documentState, setDocumentState] = useState<{
     id: string;
     pages: DocumentPage[];
-  }>({ id: "", pages: [] });
+    layoutKey: string;
+  }>({ id: "", pages: [], layoutKey: "" });
   const [referencePages, setReferencePages] = useState<DocumentPage[]>([]);
   const [currentPage, setCurrentPage] = useState(0);
   const [pageInput, setPageInput] = useState("1");
@@ -173,16 +196,26 @@ export default function PdfApp() {
     height: innerHeight - 44,
   });
   const [sidebar, setSidebar] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<"outline" | "files">("outline");
+  const [sidebarTab, setSidebarTab] = useState<"outline" | "files" | "marks">("outline");
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const [librarySort, setLibrarySort] = useState("recent");
+  const [progressRevision, setProgressRevision] = useState(0);
+  const [markState, setMarkState] = useState<{ bookId: string; marks: ReaderMark[] }>(() => ({ bookId: paperDemoBook.id, marks: readMarks(paperDemoBook.id) }));
+  const [selectedMark, setSelectedMark] = useState<string>();
+  const [textSelection, setTextSelection] = useState<CapturedTextSelection | null>(null);
+  const marks = markState.bookId === book.id ? markState.marks : NO_MARKS;
+  const [backStack, setBackStack] = useState<NavigationLocation[]>([]);
+  const [forwardStack, setForwardStack] = useState<NavigationLocation[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [propertiesOpen, setPropertiesOpen] = useState(false);
   const [coverSettingsOpen, setCoverSettingsOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query.trim());
   const [matchIndex, setMatchIndex] = useState(0);
   const [concealed, setConcealed] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [paginating, setPaginating] = useState(true);
+  const [paginationRunning, setPaginating] = useState(true);
   const [paginationProgress, setPaginationProgress] = useState(0);
   const [notice, setNotice] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -198,6 +231,10 @@ export default function PdfApp() {
   const desiredChapter = useRef<number | null>(null);
   const dragDepth = useRef(0);
   const scrollFrame = useRef(0);
+  const progressTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const savedChapter = useRef("");
+  const contentClickRef = useRef<(event: React.MouseEvent<HTMLElement>) => void>(() => {});
+  const handleContentClick = useCallback((event: React.MouseEvent<HTMLElement>) => contentClickRef.current(event), []);
   const pendingReadingAnchor = useRef<ReadingAnchor | null>(null);
   const pendingCoverAnchor = useRef<ReadingAnchor | null>(null);
   const originalPosition = useRef<{ fraction: number; page: number; anchor: ReadingAnchor | null }>({ fraction: 0, page: 0, anchor: null });
@@ -213,6 +250,8 @@ export default function PdfApp() {
   const ready = concealed
     ? chosenCoverPages.length > 0
     : documentState.id === book.id && documentState.pages.length > 0;
+  const bookLayoutKey = JSON.stringify([book.id, metadata, showFigures, showImages, typography]);
+  const paginating = paginationRunning || documentState.layoutKey !== bookLayoutKey;
   const columns = spread && viewport.width >= 760 ? 2 : 1;
   const fitWidth = Math.max(
     0.15,
@@ -232,6 +271,12 @@ export default function PdfApp() {
     cover?.document.kind === "docx" && wordPages.paginating
   );
   const previousLayout = useRef({ scale, columns });
+  const readingPercent = pageToProgress(currentPage, pageTotal);
+  const currentChapterIndex = Math.max(0, pages[currentPage]?.chapterIndex ?? 0);
+  const visibleLibrary = useMemo(() => {
+    const term = libraryQuery.trim().toLocaleLowerCase();
+    return library.filter(saved => `${saved.title} ${saved.author}`.toLocaleLowerCase().includes(term)).sort((a, b) => librarySort === "title" ? a.title.localeCompare(b.title, "zh") : librarySort === "added" ? b.addedAt - a.addedAt : (readReadingProgress(b.id)?.updatedAt ?? b.addedAt) - (readReadingProgress(a.id)?.updatedAt ?? a.addedAt));
+  }, [library, libraryQuery, librarySort, progressRevision]);
 
   useEffect(() => {
     document.documentElement.removeAttribute("data-theme");
@@ -255,6 +300,12 @@ export default function PdfApp() {
   }, [showFigures]);
   useEffect(() => { put("paper-pdf-images", String(showImages)); }, [showImages]);
   useEffect(() => { put("paper-pdf-auto-cover", String(autoCoverEnabled)); }, [autoCoverEnabled]);
+  useEffect(() => {
+    setMarkState({ bookId: book.id, marks: readMarks(book.id) });
+    setSelectedMark(undefined);
+    setBackStack([]);
+    setForwardStack([]);
+  }, [book.id]);
   useEffect(() => {
     if (notice) {
       const timer = setTimeout(() => setNotice(""), 6500);
@@ -308,7 +359,7 @@ export default function PdfApp() {
   useEffect(() => {
     const controller = new AbortController();
     paginateBlocks(
-      buildDocumentBlocks(paperDemoBook, DEFAULT_DOCUMENT_METADATA, true),
+      stampReadingAnchors(buildDocumentBlocks(paperDemoBook, DEFAULT_DOCUMENT_METADATA, true)),
       { signal: controller.signal },
     )
       .then(setReferencePages)
@@ -323,10 +374,11 @@ export default function PdfApp() {
     paginateBlocks(applyFigureVisibility(stamped, { images: showImages, generated: showFigures }), {
       signal: controller.signal,
       onProgress: setPaginationProgress,
+      typography,
     })
       .then((nextPages) => {
         if (!controller.signal.aborted) {
-          setDocumentState({ id: book.id, pages: nextPages });
+          setDocumentState({ id: book.id, pages: nextPages, layoutKey: bookLayoutKey });
           setPaginating(false);
         }
       })
@@ -337,7 +389,7 @@ export default function PdfApp() {
         }
       });
     return () => controller.abort();
-  }, [book, metadata, showFigures, showImages, notify]);
+  }, [book, metadata, showFigures, showImages, typography, bookLayoutKey, notify]);
 
   const goToPage = useCallback(
     (value: number, behavior: ScrollBehavior = "auto") => {
@@ -425,7 +477,7 @@ export default function PdfApp() {
   useEffect(() => {
     setPageInput(String(currentPage + 1));
   }, [currentPage]);
-  useEffect(() => {
+  const saveCurrentProgress = useCallback(() => {
     if (
       concealed ||
       !ready ||
@@ -434,34 +486,145 @@ export default function PdfApp() {
       documentState.id !== book.id
     )
       return;
-    const page = documentState.pages[currentPage];
+    const element = viewportRef.current;
+    if (!element || element.dataset.readingBookId !== book.id) return;
+    const index = Math.max(0, Number(element.dataset.readingCurrentPage) || 0);
+    const page = documentState.pages[index];
     if (!page) return;
-    const timer = setTimeout(() => {
-      put(`paper-pdf-position:${book.id}`, String(currentPage + 1));
-      const anchor = viewportRef.current && captureReadingAnchor(viewportRef.current);
-      if (anchor) put(`paper-pdf-anchor:${book.id}`, JSON.stringify(anchor));
-      if (!book.isDemo)
-        savePosition(book.id, Math.max(0, page.chapterIndex)).catch(() => {});
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [
-    currentPage,
-    book.id,
-    book.isDemo,
-    ready,
-    paginating,
-    importing,
-    concealed,
-    documentState,
-  ]);
+    writeReadingProgress(book.id, { page: index, chapterIndex: Math.max(0, page.chapterIndex), percent: pageToProgress(index, documentState.pages.length), anchor: captureReadingAnchor(element), updatedAt: Date.now() });
+    setProgressRevision(value => value + 1);
+    const key = `${book.id}:${page.chapterIndex}`;
+    if (!book.isDemo && savedChapter.current !== key) {
+      savedChapter.current = key;
+      void savePosition(book.id, Math.max(0, page.chapterIndex)).catch(() => {});
+    }
+  }, [book.id, book.isDemo, ready, paginating, importing, concealed, documentState]);
+
+  useEffect(() => {
+    const element = viewportRef.current;
+    const schedule = () => {
+      clearTimeout(progressTimer.current);
+      progressTimer.current = setTimeout(saveCurrentProgress, 300);
+    };
+    const onVisibility = () => { if (document.visibilityState === "hidden") saveCurrentProgress(); };
+    schedule();
+    element?.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("pagehide", saveCurrentProgress);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearTimeout(progressTimer.current);
+      element?.removeEventListener("scroll", schedule);
+      window.removeEventListener("pagehide", saveCurrentProgress);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [saveCurrentProgress]);
+
+  const captureLocation = useCallback((): NavigationLocation => ({
+    anchor: viewportRef.current ? captureReadingAnchor(viewportRef.current) : null,
+    page: currentPage,
+  }), [currentPage]);
+  const rememberLocation = useCallback(() => {
+    if (concealed || !ready || paginating) return;
+    const location = captureLocation();
+    setBackStack(value => [...value.slice(-49), location]);
+    setForwardStack([]);
+  }, [concealed, ready, paginating, captureLocation]);
+  const restoreLocation = useCallback((location: NavigationLocation) => {
+    const index = location.anchor && viewportRef.current
+      ? restoreReadingAnchor(viewportRef.current, location.anchor) : null;
+    if (index !== null) setCurrentPage(index);
+    else goToPage(location.page);
+  }, [goToPage]);
+  const navigateHistory = useCallback((direction: "back" | "forward") => {
+    const stack = direction === "back" ? backStack : forwardStack;
+    const location = stack.at(-1);
+    if (!location || concealed || paginating) return;
+    const current = captureLocation();
+    if (direction === "back") {
+      setBackStack(stack.slice(0, -1));
+      setForwardStack(value => [...value.slice(-49), current]);
+    } else {
+      setForwardStack(stack.slice(0, -1));
+      setBackStack(value => [...value.slice(-49), current]);
+    }
+    restoreLocation(location);
+  }, [backStack, forwardStack, concealed, paginating, captureLocation, restoreLocation]);
+
+  useEffect(() => {
+    setTextSelection(null);
+    const onSelection = () => {
+      const selection = window.getSelection();
+      if (concealed || paginating || !selection || !viewportRef.current) {
+        setTextSelection(null);
+        return;
+      }
+      setTextSelection(captureTextSelection(viewportRef.current, selection));
+    };
+    document.addEventListener("selectionchange", onSelection);
+    return () => document.removeEventListener("selectionchange", onSelection);
+  }, [book.id, concealed, paginating]);
+
+  const updateMarks = (next: ReaderMark[]) => {
+    if (next.length > MAX_READER_MARKS) { notify("每本书最多保存 1000 条书签和批注，请先导出并整理。"); return; }
+    setMarkState({ bookId: book.id, marks: next });
+    if (!writeMarks(book.id, next)) notify("批注暂时保存在本次页面中，浏览器空间不足，请导出备份。");
+  };
+  const addBookmark = () => {
+    if (concealed || !ready || paginating || !viewportRef.current) return;
+    const anchor = captureReadingAnchor(viewportRef.current);
+    if (!anchor) { notify("当前位置没有可保存的正文，请滚动到文字后添加书签。"); return; }
+    const node = [...viewportRef.current.querySelectorAll<HTMLElement>("[data-reading-anchor]")]
+      .find(element => element.dataset.readingAnchor === anchor.id &&
+        (Number(element.dataset.readingStart) || 0) <= anchor.offset &&
+        (Number(element.dataset.readingStart) || 0) + (element.textContent?.length || 0) > anchor.offset);
+    const quote = (node?.textContent || "").slice(Math.max(0, anchor.offset - (Number(node?.dataset.readingStart) || 0)), Math.max(0, anchor.offset - (Number(node?.dataset.readingStart) || 0)) + 140);
+    const existing = marks.find(mark => mark.kind === "bookmark" && mark.anchor.id === anchor.id && Math.abs(mark.anchor.offset - anchor.offset) < 10);
+    const mark = existing || createBookmark(anchor, currentChapterIndex, quote);
+    if (!existing) updateMarks([...marks, mark]);
+    setSelectedMark(mark.id); setSidebarTab("marks"); setSidebar(true);
+  };
+  const addSelection = () => {
+    if (concealed || paginating) return;
+    const selection = viewportRef.current && window.getSelection()
+      ? captureTextSelection(viewportRef.current, window.getSelection()!) : textSelection;
+    if (!selection) { notify("请先用鼠标选中正文（最多 12000 字），再添加划线。"); return; }
+    const source = /^c(-?\d+)-/.exec(selection.anchor.id);
+    const mark = createHighlight(selection, source ? Math.max(0, Number(source[1])) : currentChapterIndex);
+    updateMarks([...marks, mark]);
+    window.getSelection()?.removeAllRanges(); setTextSelection(null);
+    setSelectedMark(mark.id); setSidebarTab("marks"); setSidebar(true);
+  };
+  const exportNotes = (format: "markdown" | "json") => {
+    let text: string;
+    try { text = format === "json" ? serializeMarks(book.id, book.title, marks) : exportMarksMarkdown(book.title, marks, book.chapters.map(chapter => chapter.title)); }
+    catch (error) { notify(errorText(error)); return; }
+    const url = URL.createObjectURL(new Blob([text], { type: format === "json" ? "application/json;charset=utf-8" : "text/markdown;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url;
+    link.download = `${book.title.replace(/[<>:"/\\|?*]/g, "_")}-笔记.${format === "json" ? "json" : "md"}`;
+    link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const importNotes = async (file: File) => {
+    const id = book.id;
+    if (file.size > MAX_MARKS_BACKUP_BYTES) { notify("备份文件过大，请选择 20 MB 以内的 JSON 文件。"); return; }
+    try {
+      const value = importMarks(await file.text(), id, readMarks(id));
+      if (!writeMarks(id, value)) throw new Error("浏览器无法保存批注，请检查存储空间。");
+      setMarkState(current => current.bookId === id ? { bookId: id, marks: value } : current);
+      notify(`已合并批注备份，共 ${value.length} 条。`);
+    } catch (error) { notify(errorText(error)); }
+  };
 
   const toggleReference = useCallback(() => {
+    saveCurrentProgress();
     setMenuOpen(false);
     setFindOpen(false);
     setPropertiesOpen(false);
     setCoverSettingsOpen(false);
+    setPreferencesOpen(false);
     setSidebar(false);
     setImage(null);
+    setTextSelection(null);
+    window.getSelection()?.removeAllRanges();
     setQuery("");
     setNotice("");
     if (!concealed) {
@@ -496,7 +659,7 @@ export default function PdfApp() {
         }),
       );
     }
-  }, [concealed, currentPage, scale, columns, chosenCoverPages.length, cover]);
+  }, [concealed, currentPage, scale, columns, chosenCoverPages.length, cover, saveCurrentProgress]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -509,7 +672,7 @@ export default function PdfApp() {
         importing,
         coverLoading,
         coverSettingsOpen,
-        propertiesOpen,
+        propertiesOpen: propertiesOpen || preferencesOpen,
         imageOpen: Boolean(image),
         dragging,
       }, event)) return;
@@ -527,6 +690,7 @@ export default function PdfApp() {
     coverLoading,
     coverSettingsOpen,
     propertiesOpen,
+    preferencesOpen,
     image,
     dragging,
     toggleReference,
@@ -536,7 +700,7 @@ export default function PdfApp() {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const typing = target?.closest(
-        "input, textarea, select, [contenteditable]:not([contenteditable='false'])",
+        "input, textarea, select, button, a, [contenteditable]:not([contenteditable='false'])",
       );
       if (
         event.key.toLowerCase() === "q" &&
@@ -567,6 +731,7 @@ export default function PdfApp() {
         setMenuOpen(false);
         setPropertiesOpen(false);
         setCoverSettingsOpen(false);
+        setPreferencesOpen(false);
         setImage(null);
         setSidebar(false);
       }
@@ -578,12 +743,12 @@ export default function PdfApp() {
     if (findOpen) requestAnimationFrame(() => findRef.current?.focus());
   }, [findOpen]);
   useEffect(() => {
-    if (!propertiesOpen && !image && !coverSettingsOpen) return;
+    if (!propertiesOpen && !image && !coverSettingsOpen && !preferencesOpen) return;
     const previous = document.activeElement as HTMLElement | null;
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
     const elements = () => [
       ...(dialog?.querySelectorAll<HTMLElement>(
-        "button:not([disabled]),input,a[href]",
+        "button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href]",
       ) || []),
     ];
     elements()[0]?.focus();
@@ -606,20 +771,21 @@ export default function PdfApp() {
       dialog?.removeEventListener("keydown", trap);
       previous?.focus();
     };
-  }, [propertiesOpen, image, coverSettingsOpen]);
+  }, [propertiesOpen, image, coverSettingsOpen, preferencesOpen]);
 
   const matches = useMemo(() => {
-    if (!query.trim()) return [];
+    if (!deferredQuery) return [];
     return pages.flatMap((page, index) =>
-      findHtmlMatches(page.html, query).map((match) => ({
+      findHtmlMatches(page.html, deferredQuery).map((match) => ({
         page: index,
         occurrence: match.id,
       })),
     );
-  }, [pages, query]);
+  }, [pages, deferredQuery]);
   const jumpToMatch = useCallback(
     (index: number) => {
       if (!matches.length) return;
+      rememberLocation();
       const next = (index + matches.length) % matches.length;
       setMatchIndex(next);
       goToPage(matches[next].page);
@@ -631,7 +797,7 @@ export default function PdfApp() {
           ?.scrollIntoView({ block: "center", inline: "nearest" }),
       );
     },
-    [matches, goToPage],
+    [matches, goToPage, rememberLocation],
   );
   const previousMatches = useRef(matches);
   useEffect(() => {
@@ -644,6 +810,7 @@ export default function PdfApp() {
 
   const openSaved = async (saved?: SavedBook) => {
     if (loadingRef.current) return;
+    saveCurrentProgress();
     setConcealed(false);
     setQuery("");
     setMenuOpen(false);
@@ -681,13 +848,15 @@ export default function PdfApp() {
       notify("请选择 EPUB 格式的文件。");
       return;
     }
+    saveCurrentProgress();
     loadingRef.current = true;
     setImporting(true);
     setMenuOpen(false);
     try {
       const parsed = await parseEpub(file);
-      pendingReadingAnchor.current = null;
-      desiredPage.current = 0;
+      pendingReadingAnchor.current = readAnchor(parsed.id);
+      const progress = readReadingProgress(parsed.id);
+      desiredPage.current = progress?.page ?? 0;
       desiredChapter.current = null;
       setConcealed(false);
       setQuery("");
@@ -730,12 +899,14 @@ export default function PdfApp() {
     setMenuOpen(false);
   };
   const preserveReadingPosition = () => {
+    saveCurrentProgress();
     pendingReadingAnchor.current = viewportRef.current ? captureReadingAnchor(viewportRef.current) : null;
     desiredPage.current = currentPage;
     desiredChapter.current = null;
     setFindOpen(false);
     setQuery("");
     setImage(null);
+    setTextSelection(null);
   };
   const toggleImages = () => {
     if (imageToggleDisabled) return;
@@ -781,17 +952,21 @@ export default function PdfApp() {
     const first = pages.findIndex((page) =>
       page.chapterIndices.includes(index),
     );
-    if (first >= 0) goToPage(first);
-    if (fragment)
-      requestAnimationFrame(() =>
-        [...(viewportRef.current?.querySelectorAll("[id]") || [])]
-          .find((element) => element.id === fragment)
-          ?.scrollIntoView({ block: "start", inline: "nearest" }),
-      );
+    const target = fragment && viewportRef.current ? findChapterFragment(viewportRef.current, index, fragment) : null;
+    if (first < 0 && !target) return;
+    rememberLocation();
+    if (target) {
+      target.scrollIntoView({ block: "start", inline: "nearest" });
+      setCurrentPage(Number(target.closest<HTMLElement>("[data-page-index]")?.dataset.pageIndex) || 0);
+    } else goToPage(first);
     if (innerWidth < 760) setSidebar(false);
   };
   const contentClick = (event: React.MouseEvent<HTMLElement>) => {
     const target = event.target as Element;
+    const marked = target.closest<HTMLElement>("[data-reader-mark]");
+    if (marked && !concealed) {
+      setSelectedMark(marked.dataset.readerMark); setSidebarTab("marks"); setSidebar(true);
+    }
     const link = target.closest("a");
     if (link) {
       if (/^https?:\/\//i.test(link.getAttribute("href") || "")) {
@@ -802,10 +977,14 @@ export default function PdfApp() {
       event.preventDefault();
       if (link.dataset.chapterId)
         chapterPage(link.dataset.chapterId, link.dataset.fragment);
-      else if (link.getAttribute("href")?.startsWith("#"))
-        [...(viewportRef.current?.querySelectorAll("[id]") || [])]
-          .find((element) => element.id === link.getAttribute("href")!.slice(1))
-          ?.scrollIntoView({ block: "start", inline: "nearest" });
+      else if (link.getAttribute("href")?.startsWith("#") && viewportRef.current) {
+        const chapter = Number(link.closest<HTMLElement>("[data-source-chapter]")?.dataset.sourceChapter ?? pages[currentPage]?.chapterIndex ?? 0);
+        const rawFragment = link.getAttribute("href")!.slice(1);
+        let fragment = rawFragment;
+        try { fragment = decodeURIComponent(rawFragment); } catch { /* keep the literal fragment */ }
+        const node = findChapterFragment(viewportRef.current, chapter, fragment);
+        if (node) { rememberLocation(); node.scrollIntoView({ block: "start", inline: "nearest" }); setCurrentPage(Number(node.closest<HTMLElement>("[data-page-index]")?.dataset.pageIndex) || 0); }
+      }
       return;
     }
     const img = target.closest("img") as HTMLImageElement | null;
@@ -826,10 +1005,38 @@ export default function PdfApp() {
           "Figure",
       });
   };
+  useLayoutEffect(() => { contentClickRef.current = contentClick; });
+
+  const moveChapter = (delta: number) => {
+    const chapterIndices = [...new Set(pages.flatMap(page => page.chapterIndices))].filter(index => index >= 0).sort((a, b) => a - b);
+    const position = chapterIndices.indexOf(currentChapterIndex);
+    const index = chapterIndices[position + delta];
+    if (index === undefined) return;
+    const chapter = book.chapters[index];
+    if (chapter) chapterPage(chapter.id);
+  };
+  useEffect(() => {
+    const onReadingKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (event.defaultPrevented || event.isComposing || target?.closest("input,textarea,select,button,a,[contenteditable]:not([contenteditable='false'])") || propertiesOpen || preferencesOpen || coverSettingsOpen || image || !ready || activePaginating) return;
+      const key = event.key;
+      if (!concealed && (event.ctrlKey || event.metaKey) && key.toLowerCase() === "d") { event.preventDefault(); addBookmark(); return; }
+      if (!concealed && event.altKey && ["ArrowLeft", "ArrowRight"].includes(key)) { event.preventDefault(); navigateHistory(key === "ArrowLeft" ? "back" : "forward"); return; }
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (["ArrowLeft", "ArrowRight", "PageUp", "PageDown", " ", "Home", "End"].includes(key)) {
+        event.preventDefault();
+        if (key === "Home" || key === "End") { rememberLocation(); goToPage(key === "Home" ? 0 : pageTotal - 1); }
+        else goToPage(currentPage + (["ArrowLeft", "PageUp"].includes(key) || (key === " " && event.shiftKey) ? -1 : 1));
+      }
+    };
+    window.addEventListener("keydown", onReadingKey);
+    return () => window.removeEventListener("keydown", onReadingKey);
+  });
 
   return (
     <div
       className="document-viewer"
+      data-reader-theme={concealed ? "paper" : preferences.theme}
       onDragEnter={(event) => {
         if (event.dataTransfer.types.includes("Files")) {
           event.preventDefault();
@@ -1124,6 +1331,8 @@ export default function PdfApp() {
               <Settings2 size={16} />
               文档属性…
             </button>
+            {!concealed && <button role="menuitem" disabled={paginating || !ready} onClick={() => { setPreferencesOpen(true); setMenuOpen(false); }}><Settings2 size={16} />阅读设置…</button>}
+            {!concealed && <button role="menuitem" onClick={() => { setSidebarTab("marks"); setSidebar(true); setMenuOpen(false); }}><BookmarkPlus size={16} />书签与批注</button>}
             <button role="menuitem" onClick={openCoverSettings}><FolderOpen size={16} />选择遮挡文档…</button>
             <hr />
             <button role="menuitemcheckbox" aria-checked={showImages} onClick={toggleImages} disabled={imageToggleDisabled}><span className="menu-check">{showImages ? "✓" : ""}</span>显示 EPUB / Word 正文图片</button>
@@ -1204,6 +1413,7 @@ export default function PdfApp() {
                   <FileText size={15} />
                   文件
                 </button>
+                {!concealed && <button className={sidebarTab === "marks" ? "selected" : ""} onClick={() => setSidebarTab("marks")}><BookmarkPlus size={15} />批注</button>}
                 <button
                   className="pdf-tool"
                   aria-label="关闭侧栏"
@@ -1219,6 +1429,7 @@ export default function PdfApp() {
                     <button
                       key={`${item.chapterId}-${index}`}
                       className="outline-item"
+                      aria-current={(concealed ? paperDemoBook : book).chapters[currentChapterIndex]?.id === item.chapterId ? "location" : undefined}
                       style={{ paddingLeft: 15 + item.level * 13 }}
                       onClick={() => chapterPage(item.chapterId, item.fragment)}
                     >
@@ -1241,6 +1452,13 @@ export default function PdfApp() {
                     </button>
                   ))}
                 </nav>
+              ) : sidebarTab === "marks" && !concealed ? (
+                <ReaderMarksPanel marks={marks} chapterNames={book.chapters.map(chapter => chapter.title)} selectedId={selectedMark}
+                  onSelect={id => setSelectedMark(id ?? undefined)}
+                  onJump={mark => { rememberLocation(); restoreLocation({ anchor: mark.anchor, page: Math.max(0, pages.findIndex(page => page.chapterIndices.includes(mark.chapterIndex))) }); if (innerWidth < 760) setSidebar(false); }}
+                  onRemove={id => { updateMarks(marks.filter(mark => mark.id !== id)); if (selectedMark === id) setSelectedMark(undefined); }}
+                  onUpdate={(id, patch) => { updateMarks(marks.map(mark => mark.id === id ? { ...mark, ...patch } : mark)); notify("批注已保存。"); }}
+                  onAddBookmark={addBookmark} onAddSelection={addSelection} onExport={exportNotes} onImport={file => void importNotes(file)} disabled={paginating || !ready} />
               ) : (
                 <div className="file-library">
                   <button
@@ -1251,6 +1469,10 @@ export default function PdfApp() {
                     <FolderOpen size={16} />
                     打开 EPUB 文件
                   </button>
+                  <div className="reader-library-controls">
+                    <input type="search" aria-label="筛选书库" placeholder="按书名或作者查找" value={libraryQuery} onChange={event => setLibraryQuery(event.target.value)} />
+                    <select aria-label="书库排序" value={librarySort} onChange={event => setLibrarySort(event.target.value)}><option value="recent">最近阅读</option><option value="title">按书名</option><option value="added">最近添加</option></select>
+                  </div>
                   <button
                     className={`library-document ${book.isDemo ? "selected" : ""}`}
                     onClick={() => void openSaved()}
@@ -1261,7 +1483,7 @@ export default function PdfApp() {
                       <small>{DEFAULT_DOCUMENT_METADATA.filename}</small>
                     </span>
                   </button>
-                  {library.map((saved) => (
+                  {visibleLibrary.map((saved) => (
                     <div
                       className={`library-row ${saved.id === book.id ? "selected" : ""}`}
                       key={saved.id}
@@ -1274,7 +1496,7 @@ export default function PdfApp() {
                         <FileText size={17} />
                         <span>
                           {saved.title}
-                          <small>{saved.author}</small>
+                          <small>{saved.author} · 已读 {Math.round(readReadingProgress(saved.id)?.percent ?? 0)}%</small>
                         </span>
                       </button>
                       <button
@@ -1287,11 +1509,13 @@ export default function PdfApp() {
                       </button>
                     </div>
                   ))}
+                  {!visibleLibrary.length && <p className="reader-library-empty">{library.length ? "没有找到匹配的书籍。" : "打开 EPUB 后会保存在这里，可随时继续阅读。"}</p>}
                   <p className="library-note">
                     文件仅保存在此浏览器中。拖入 EPUB 也可打开。
                     <br />
                     Q 可临时切换到参考文档，再按一次返回。
                   </p>
+                  <p className="reader-keyboard-help">← / →、PageUp / PageDown：翻页<br />空格：下一页，Shift + 空格：上一页<br />Home / End：开头 / 结尾<br />Ctrl + D：书签，Alt + ← / →：跳转历史<br />Ctrl + F：搜索，Esc：关闭面板</p>
                   <button className="open-document" onClick={openCoverSettings}><FolderOpen size={16} />选择遮挡 PDF / Word</button>
                   <a
                     className="sample-link"
@@ -1309,6 +1533,7 @@ export default function PdfApp() {
           className="pdf-viewport"
           ref={viewportRef}
           data-reading-current-page={currentPage}
+          data-reading-book-id={concealed ? "" : book.id}
           onScroll={(event) => {
             const el = event.currentTarget;
             cancelAnimationFrame(scrollFrame.current);
@@ -1339,8 +1564,10 @@ export default function PdfApp() {
                   total={pages.length}
                   scale={scale}
                   metadata={effectiveMetadata}
-                  query={findOpen ? query.trim() : ""}
-                  onContentClick={contentClick}
+                  query={findOpen ? deferredQuery : ""}
+                  onContentClick={handleContentClick}
+                  marks={concealed ? NO_MARKS : marks}
+                  preferences={concealed ? undefined : preferences}
                   sourceFilename={concealed && cover ? cover.document.filename : undefined}
                 />
               ))}
@@ -1356,6 +1583,22 @@ export default function PdfApp() {
           )}
         </div>
       </div>
+      {!concealed && <nav className="reader-navigation-bar" aria-label="阅读导航">
+        <button aria-label="返回上次跳转位置" title="返回 (Alt+←)" disabled={!backStack.length || paginating} onClick={() => navigateHistory("back")}><ArrowLeft size={15} /></button>
+        <button aria-label="前进到下次跳转位置" title="前进 (Alt+→)" disabled={!forwardStack.length || paginating} onClick={() => navigateHistory("forward")}><ArrowRight size={15} /></button>
+        <button aria-label="上一章" disabled={!ready || paginating || currentChapterIndex <= 0} onClick={() => moveChapter(-1)}>上一章</button>
+        <button aria-label="下一章" disabled={!ready || paginating || currentChapterIndex >= book.chapters.length - 1} onClick={() => moveChapter(1)}>下一章</button>
+        <span className="reader-current-chapter" title={book.chapters[currentChapterIndex]?.title}>{book.chapters[currentChapterIndex]?.title || book.title}</span>
+        <label className="reader-progress-control"><span className="reader-navigation-label">进度</span><input aria-label="阅读进度" type="range" min="0" max="100" step="0.1" value={readingPercent} disabled={!ready || paginating} onPointerDown={rememberLocation} onKeyDown={event => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) rememberLocation(); }} onChange={event => goToPage(progressToPage(Number(event.target.value), pageTotal))} /><output>{Math.round(readingPercent)}%</output></label>
+        <button aria-label="添加书签" title="添加书签 (Ctrl+D)" disabled={!ready || paginating} onClick={addBookmark}><BookmarkPlus size={15} /><span className="reader-navigation-label">书签</span></button>
+        <button aria-label="书签与批注" onClick={() => { setSidebarTab("marks"); setSidebar(true); }}>批注 {marks.length || ""}</button>
+        <button aria-label="阅读设置" disabled={!ready || paginating} onClick={() => setPreferencesOpen(true)}><Settings2 size={15} /><span className="reader-navigation-label">阅读设置</span></button>
+      </nav>}
+      {!concealed && textSelection && !paginating && <div className="reader-selection-actions" aria-label="选文操作"><button onMouseDown={event => event.preventDefault()} onClick={addSelection}>划线并批注 · {textSelection.quote.length} 字</button><button aria-label="取消选文" onClick={() => { window.getSelection()?.removeAllRanges(); setTextSelection(null); }}><X size={14} /></button></div>}
+      {preferencesOpen && !concealed && <ReaderPreferencesDialog value={preferences} onClose={() => setPreferencesOpen(false)} onApply={next => {
+        if (next.fontSize !== preferences.fontSize || next.lineHeight !== preferences.lineHeight || next.fontFamily !== preferences.fontFamily) preserveReadingPosition();
+        setPreferences(next); if (!writeReaderPreferences(next)) notify("阅读设置暂时无法持久保存。"); setPreferencesOpen(false);
+      }} />}
       {notice && (!concealed || coverSettingsOpen) && (
         <div className="pdf-notice" role="alert">
           <span>{notice}</span>
@@ -1414,7 +1657,7 @@ export default function PdfApp() {
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                desiredPage.current = currentPage;
+                if (!concealed) preserveReadingPosition();
                 const next = Object.fromEntries(
                   Object.entries(draft).map(([key, value]) => [
                     key,

@@ -1,0 +1,98 @@
+.reader-preferences select {
+  min-width: 0;
+  width: 100%;
+  height: 33px;
+  border: 1px solid #726482;
+  border-radius: 3px;
+  padding: 5px 8px;
+  color: #ece2f8;
+  background: #211d28;
+  font-size: 12px;
+}
+.reader-preferences select:focus-visible {
+  outline: 2px solid #b8a1d6;
+  outline-offset: 1px;
+}
+.reader-preferences .reader-range-control {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+.reader-preferences .reader-range-control input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  accent-color: #bca7db;
+  background: transparent;
+  border: 0;
+}
+.reader-range-control output {
+  min-width: 38px;
+  text-align: right;
+  font-size: 11px;
+  color: #e4dceb;
+  font-variant-numeric: tabular-nums;
+}
+.reader-type-preview {
+  max-height: 180px;
+  overflow: auto;
+  padding: 15px;
+  margin-top: 20px;
+  border: 1px solid #7b7086;
+  border-radius: 3px;
+  background: #fff;
+  color: #111;
+}
+.reader-type-preview[data-preview-theme="sepia"] { background: #f5ecd9; color: #3e3425; }
+.reader-type-preview[data-preview-theme="dark"] { background: #22242a; color: #dedee2; }
+.reader-preferences .properties-actions { flex-wrap: wrap; }
+.reader-reset-preferences { margin-right: auto; }
+
+/* These colors are scoped to book pages. Cover PDF / Word pages stay unchanged. */
+.document-viewer[data-reader-theme="sepia"] .reader-book-page {
+  --reader-paper: #f5ecd9;
+  --reader-ink: #3e3425;
+  --reader-muted: #665941;
+  --reader-rule: #a69b87;
+}
+.document-viewer[data-reader-theme="dark"] .reader-book-page {
+  --reader-paper: #22242a;
+  --reader-ink: #dedee2;
+  --reader-muted: #b4b6be;
+  --reader-rule: #686d77;
+}
+.document-viewer[data-reader-theme="sepia"] .reader-book-page,
+.document-viewer[data-reader-theme="dark"] .reader-book-page,
+.document-viewer[data-reader-theme="sepia"] .reader-book-page .pdf-typeset,
+.document-viewer[data-reader-theme="dark"] .reader-book-page .pdf-typeset {
+  background: var(--reader-paper);
+  color: var(--reader-ink);
+}
+.document-viewer[data-reader-theme]:not([data-reader-theme="paper"]) .reader-book-page :is(.pdf-running-header, .pdf-page-footer, figcaption, blockquote, h1, h2, h3, h4, .pdf-journal-name) {
+  color: var(--reader-ink, #111);
+}
+.document-viewer[data-reader-theme]:not([data-reader-theme="paper"]) .reader-book-page .pdf-journal-identity::after {
+  color: var(--reader-muted, #333);
+  border-color: var(--reader-rule, #999);
+}
+.document-viewer[data-reader-theme]:not([data-reader-theme="paper"]) .reader-book-page :is(td, th, table tr:last-child td, hr) {
+  border-color: var(--reader-rule, #bbb);
+}
+.document-viewer[data-reader-theme="dark"] .reader-book-page a { color: #93c9ff; }
+.document-viewer[data-reader-theme="dark"] .reader-book-page svg { background: #fff; }
+.document-viewer[data-reader-theme="dark"] .reader-book-page mark { color: #181818; }
+
+@media print {
+  .document-viewer[data-reader-theme] .reader-book-page {
+    --reader-paper: white !important;
+    --reader-ink: black !important;
+    --reader-muted: #333 !important;
+    --reader-rule: #999 !important;
+  }
+  .document-viewer[data-reader-theme] .reader-book-page .pdf-typeset {
+    background: white !important;
+    color: black !important;
+  }
+  .document-viewer[data-reader-theme] .reader-book-page a { color: #085b8b !important; }
+}

@@ -690,13 +690,23 @@ export async function parseEpub(file: File | Blob): Promise<Book> {
         );
     }
     const chapterIds = new Map<string, string>();
+    const chapterItems: ManifestItem[] = [];
     spineItems.forEach((item, index) => {
-      if (!chapterIds.has(item.path))
+      if (!chapterIds.has(item.path)) {
         chapterIds.set(item.path, `chapter-${index + 1}`);
+        chapterItems.push(item);
+      }
     });
+    const primaryPaths = new Set(chapterIds.keys());
+    const htmlItems = new Map(
+      Array.from(manifest.values())
+        .filter((item) => HTML_TYPES.has(item.mediaType))
+        .map((item) => [item.path, item]),
+    );
     const chapters: BookChapter[] = [];
-    for (const item of spineItems) {
-      if (chapters.some((chapter) => chapter.href === item.path)) continue;
+    // Start with every primary chapter. Linked notes join the same queue after
+    // them, so nonlinear documents never interrupt the spine's reading order.
+    for (const item of chapterItems) {
       const source = await read(
         item.path,
         `EPUB 章节文件无法读取：${item.path}`,
@@ -721,6 +731,22 @@ export async function parseEpub(file: File | Blob): Promise<Book> {
         const href = anchor.getAttribute("data-paperleaf-href") ?? "";
         anchor.removeAttribute("data-paperleaf-href");
         const target = resolveLocal(item.path, href);
+        if (target && !chapterIds.has(target.path)) {
+          const referenced = htmlItems.get(target.path);
+          if (
+            referenced &&
+            entries.has(target.path) &&
+            !encrypted.has(target.path)
+          ) {
+            // Register before enqueueing so repeated references and note cycles
+            // resolve to one document with a deterministic ID.
+            chapterIds.set(
+              target.path,
+              `chapter-aux-${contentHash(new TextEncoder().encode(target.path))}`,
+            );
+            chapterItems.push(referenced);
+          }
+        }
         const chapterId = target && chapterIds.get(target.path);
         if (chapterId) {
           anchor.setAttribute("data-chapter-id", chapterId);
@@ -762,6 +788,7 @@ export async function parseEpub(file: File | Blob): Promise<Book> {
         text,
         wordCount: wordCount(text),
         imageCount,
+        ...(!primaryPaths.has(item.path) ? { auxiliary: true } : {}),
       });
     }
     if (!chapters.length) throw new Error("EPUB 中没有可阅读的章节。");
