@@ -6,7 +6,7 @@ export interface ReadingAnchor {
   viewportY: number;
 }
 
-const EXCLUDED = "figure,figcaption,svg,img,math,script,style,template";
+const EXCLUDED = ".pdf-generated-figure,figcaption,svg,img,math,script,style,template";
 const PROSE =
   "p,h1,h2,h3,h4,h5,h6,li,pre,td,th,dt,dd,.pdf-abstract,.pdf-keywords";
 

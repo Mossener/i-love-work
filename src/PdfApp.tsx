@@ -49,6 +49,7 @@ import type { Book, SavedBook } from "./types";
 import { applyFigureVisibility } from "./lib/figure-visibility";
 import { captureReadingAnchor, restoreReadingAnchor, stampReadingAnchors, type ReadingAnchor } from "./lib/reading-position";
 import { useCoverDocument } from "./lib/use-cover-document";
+import { useWordPages } from "./lib/use-word-pages";
 import { PdfCanvasPage } from "./components/CoverPdfPages";
 
 const get = (key: string) => {
@@ -194,13 +195,15 @@ export default function PdfApp() {
   const dragDepth = useRef(0);
   const scrollFrame = useRef(0);
   const pendingReadingAnchor = useRef<ReadingAnchor | null>(null);
+  const pendingCoverAnchor = useRef<ReadingAnchor | null>(null);
   const originalPosition = useRef<{ fraction: number; page: number; anchor: ReadingAnchor | null }>({ fraction: 0, page: 0, anchor: null });
-  const coverPosition = useRef({ fraction: 0, page: 0 });
+  const coverPosition = useRef<{ fraction: number; page: number; anchor: ReadingAnchor | null }>({ fraction: 0, page: 0, anchor: null });
   const notify = useCallback((text: string) => setNotice(text), []);
   const { cover, loading: coverLoading, importCover, resetCover } = useCoverDocument(notify);
+  const wordPages = useWordPages(cover?.document ?? null, showImages, notify);
   const chosenCoverPages = useMemo(() => cover?.document.kind === "pdf"
     ? Array.from({ length: cover.document.pdf.numPages }, () => ({ html: "", chapterIndex: 0, chapterIndices: [0] }))
-    : cover?.pages || referencePages, [cover, referencePages]);
+    : cover?.document.kind === "docx" ? wordPages.pages : referencePages, [cover, wordPages.pages, referencePages]);
   const effectiveMetadata = concealed ? DEFAULT_DOCUMENT_METADATA : metadata;
   const pages = concealed ? chosenCoverPages : documentState.pages;
   const ready = concealed
@@ -219,6 +222,8 @@ export default function PdfApp() {
         : Math.max(0.25, Math.min(2.5, Number(zoom) / 100 || fitWidth));
   const pageTotal = pages.length;
   const coverIsPdf = concealed && cover?.document.kind === "pdf";
+  const activePaginating = concealed ? cover?.document.kind === "docx" && wordPages.paginating : paginating;
+  const imageToggleDisabled = coverIsPdf || (concealed && !cover) || activePaginating || !ready;
   const previousLayout = useRef({ scale, columns });
 
   useEffect(() => {
@@ -341,6 +346,20 @@ export default function PdfApp() {
   );
 
   useLayoutEffect(() => {
+    if (!concealed || cover?.document.kind !== "docx" || !ready || wordPages.paginating) return;
+    if (pendingCoverAnchor.current && viewportRef.current) {
+      const index = restoreReadingAnchor(viewportRef.current, pendingCoverAnchor.current);
+      pendingCoverAnchor.current = null;
+      if (index !== null) {
+        setCurrentPage(index);
+        setPageInput(String(index + 1));
+        return;
+      }
+    }
+    setCurrentPage(value => Math.min(value, pages.length - 1));
+  }, [concealed, cover, ready, wordPages.paginating, pages]);
+
+  useLayoutEffect(() => {
     const previous = previousLayout.current;
     previousLayout.current = { scale, columns };
     const element = viewportRef.current;
@@ -449,11 +468,13 @@ export default function PdfApp() {
       setConcealed(true);
       const targetPage = Math.min(coverPosition.current.page, chosenCoverPages.length - 1);
       setCurrentPage(Math.max(0, targetPage));
-      requestAnimationFrame(() => viewportRef.current?.scrollTo({ top: (Math.floor(Math.max(0, targetPage) / columns) + coverPosition.current.fraction) * (PAGE_HEIGHT * scale + 12) }));
+      pendingCoverAnchor.current = coverPosition.current.anchor;
+      if (!coverPosition.current.anchor) requestAnimationFrame(() => viewportRef.current?.scrollTo({ top: (Math.floor(Math.max(0, targetPage) / columns) + coverPosition.current.fraction) * (PAGE_HEIGHT * scale + 12) }));
     } else {
       coverPosition.current = {
         page: currentPage,
         fraction: Math.max(0, Math.min(1, (viewportRef.current?.scrollTop || 0) / (PAGE_HEIGHT * scale + 12) - Math.floor(currentPage / columns))),
+        anchor: pendingCoverAnchor.current || (cover?.document.kind === "docx" && viewportRef.current ? captureReadingAnchor(viewportRef.current, { nearest: false }) : null),
       };
       pendingReadingAnchor.current = originalPosition.current.anchor;
       setConcealed(false);
@@ -467,7 +488,7 @@ export default function PdfApp() {
         }),
       );
     }
-  }, [concealed, currentPage, scale, columns, chosenCoverPages.length]);
+  }, [concealed, currentPage, scale, columns, chosenCoverPages.length, cover]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -675,8 +696,13 @@ export default function PdfApp() {
     setImage(null);
   };
   const toggleImages = () => {
-    if (concealed || paginating || !ready) return;
-    preserveReadingPosition();
+    if (imageToggleDisabled) return;
+    if (concealed) {
+      pendingCoverAnchor.current = viewportRef.current ? captureReadingAnchor(viewportRef.current) : null;
+      setFindOpen(false);
+      setQuery("");
+      setImage(null);
+    } else preserveReadingPosition();
     setShowImages(value => !value);
     setMenuOpen(false);
   };
@@ -696,7 +722,8 @@ export default function PdfApp() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   useEffect(() => {
-    coverPosition.current = { fraction: 0, page: 0 };
+    coverPosition.current = { fraction: 0, page: 0, anchor: null };
+    pendingCoverAnchor.current = null;
     if (concealed) { setCurrentPage(0); viewportRef.current?.scrollTo({ top: 0 }); }
   }, [cover]);
   const changeZoom = (delta: number) => {
@@ -846,7 +873,7 @@ export default function PdfApp() {
             />
             <span>/ {pageTotal || "–"}</span>
           </form>
-          {(importing || (paginating && !concealed)) && (
+          {(importing || activePaginating) && (
             <LoaderCircle
               size={15}
               className="loading-spin"
@@ -913,7 +940,7 @@ export default function PdfApp() {
           >
             <Search size={19} />
           </button>
-          <button className={`pdf-tool image-visibility-tool ${showImages ? "pressed" : ""}`} aria-label={showImages ? "隐藏图片" : "显示图片"} title={showImages ? "隐藏书籍图片" : "显示书籍图片"} aria-pressed={showImages} disabled={concealed || paginating || !ready} onClick={toggleImages}>
+          <button className={`pdf-tool image-visibility-tool ${showImages ? "pressed" : ""}`} aria-label={showImages ? "隐藏图片" : "显示图片"} title={coverIsPdf ? "PDF 原始版式不支持去除图片" : showImages ? "隐藏 EPUB / Word 正文图片" : "显示 EPUB / Word 正文图片"} aria-pressed={showImages} disabled={imageToggleDisabled} onClick={toggleImages}>
             {showImages ? <ImageIcon size={18} /> : <ImageOff size={18} />}
           </button>
           <button className="pdf-tool optional-tool" aria-label="选择遮挡文档" title="选择遮挡文档（PDF / Word）" onClick={openCoverSettings}><FolderOpen size={18} /></button>
@@ -948,7 +975,7 @@ export default function PdfApp() {
             aria-label="打印"
             title="打印"
             onClick={printCurrentDocument}
-            disabled={!ready || (paginating && !concealed)}
+            disabled={!ready || activePaginating}
           >
             <Printer size={19} />
           </button>
@@ -957,7 +984,7 @@ export default function PdfApp() {
             aria-label="另存为 PDF"
             title="另存为 PDF"
             onClick={downloadCurrentDocument}
-            disabled={!ready || (paginating && !concealed)}
+            disabled={!ready || activePaginating}
           >
             <Download size={19} />
           </button>
@@ -1057,7 +1084,7 @@ export default function PdfApp() {
             </button>
             <button role="menuitem" onClick={openCoverSettings}><FolderOpen size={16} />选择遮挡文档…</button>
             <hr />
-            <button role="menuitemcheckbox" aria-checked={showImages} onClick={toggleImages} disabled={concealed || paginating || !ready}><span className="menu-check">{showImages ? "✓" : ""}</span>显示书籍图片</button>
+            <button role="menuitemcheckbox" aria-checked={showImages} onClick={toggleImages} disabled={imageToggleDisabled}><span className="menu-check">{showImages ? "✓" : ""}</span>显示 EPUB / Word 正文图片</button>
             <button
               role="menuitemcheckbox"
               aria-checked={showFigures}
@@ -1301,7 +1328,7 @@ export default function PdfApp() {
             <header><h2>遮挡文档</h2><button className="pdf-tool" aria-label="关闭遮挡文档设置" onClick={() => setCoverSettingsOpen(false)}><X size={18} /></button></header>
             <div className="cover-document-settings">
               <p className="properties-description">选择按 Q 时显示的 PDF 论文或 Word 文档。再按 Q 返回当前书籍。</p>
-              <div className="selected-cover-file"><FileText size={28} /><div><strong>{cover?.document.filename || "内置英文参考论文"}</strong><span>{cover ? cover.document.kind === "pdf" ? `${cover.document.pdf.numPages} 页 · PDF 原始版式` : `${cover.pages.length} 页 · Word 文档` : "默认文档 · 无需导入"}</span></div></div>
+              <div className="selected-cover-file"><FileText size={28} /><div><strong>{cover?.document.filename || "内置英文参考论文"}</strong><span>{cover ? cover.document.kind === "pdf" ? `${cover.document.pdf.numPages} 页 · PDF 原始版式` : wordPages.paginating ? "Word 文档 · 正在排版…" : `${wordPages.pages.length} 页 · Word 文档` : "默认文档 · 无需导入"}</span></div></div>
               <button className="cover-import-button pdf-dialog-button primary" onClick={() => coverFileRef.current?.click()} disabled={coverLoading}><FolderOpen size={16} />{coverLoading ? "正在载入文档…" : "选择 PDF / Word (.docx)"}</button>
               <p className="cover-help">文件仅保存在此浏览器。Word 保留文字与插图并重新分页；旧版 .doc 请先另存为 .docx。</p>
               <div className="properties-actions"><button className="pdf-dialog-button" disabled={coverLoading || !cover} onClick={() => void resetCover()}>恢复内置论文</button><button className="pdf-dialog-button primary" disabled={coverLoading} onClick={() => { setCoverSettingsOpen(false); if (!concealed) toggleReference(); }}>查看遮挡文档</button></div>

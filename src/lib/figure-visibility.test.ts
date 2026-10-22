@@ -22,6 +22,14 @@ describe("applyFigureVisibility", () => {
     expect(doc.querySelector(".pdf-generated-figure")).toBeNull();
   });
 
+  it("removes native figure media without deleting prose inside the figure wrapper", () => {
+    const doc = render('<p>Before.</p><figure id="source-figure"><p data-reading-anchor="source" data-reading-start="0">Original <em>embedded</em> prose.</p><img src="blob:x"><figcaption>Image caption.</figcaption></figure><p>After.</p>', false);
+    expect(doc.querySelector("img,svg,figure,figcaption")).toBeNull();
+    expect(doc.body.textContent).toBe("Before.Original embedded prose.After.");
+    expect(doc.querySelector('[data-reading-anchor="source"]')?.textContent).toBe("Original embedded prose.");
+    expect(doc.querySelector("em")?.textContent).toBe("embedded");
+  });
+
   it("keeps the paper identity mark and preserves escaped text as text", () => {
     const doc = render('<header class="pdf-masthead"><svg><path d="M0 0"></path></svg></header><p>&lt;script&gt;visible text&lt;/script&gt;</p>', false);
     expect(doc.querySelector(".pdf-masthead svg")).not.toBeNull();

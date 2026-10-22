@@ -152,7 +152,7 @@ function anchorElements(element: HTMLElement): HTMLElement[] {
 function anchorTextLength(element: HTMLElement) {
   const copy = element.cloneNode(true) as HTMLElement;
   copy
-    .querySelectorAll("figure,figcaption,svg,img,math,script,style,template")
+    .querySelectorAll(".pdf-generated-figure,figcaption,svg,img,math,script,style,template")
     .forEach((node) => node.remove());
   return copy.textContent?.length ?? 0;
 }

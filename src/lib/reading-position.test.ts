@@ -73,6 +73,27 @@ describe("reading anchors", () => {
     );
   });
 
+  it("anchors native prose inside figures while excluding captions and generated figure text", () => {
+    const stamped = stampReadingAnchors([{
+      chapterIndex: 0,
+      html: '<figure><p>Original prose.</p><img src="blob:x"><figcaption><p>Image caption.</p></figcaption></figure><figure class="pdf-generated-figure"><p>Generated explanation.</p></figure><p>Following prose.</p>',
+    }]);
+    const root = el(stamped.map(block => block.html).join(""));
+    expect([...root.querySelectorAll('[data-reading-anchor]')].map(node => node.textContent)).toEqual([
+      "Original prose.", "Following prose.",
+    ]);
+  });
+
+  it("counts retained native figure prose when a list item continues after a figure", () => {
+    const source = el(stampReadingAnchors([{
+      chapterIndex: 0,
+      html: '<li>ab<figure><p>cd</p><img src="blob:x"><figcaption>caption</figcaption></figure>efgh</li>',
+    }])[0].html).firstElementChild as HTMLElement;
+    const [, tail] = splitElementAtTextOffset(source, 11);
+    expect(tail.textContent).toBe("efgh");
+    expect(tail.dataset.readingStart).toBe("4");
+  });
+
   it("updates crossed nested anchors without shifting complete paragraphs", () => {
     const source = el(
       stampReadingAnchors([
@@ -243,7 +264,7 @@ describe("reading anchors", () => {
 
   it("anchors the nearest following prose when the viewport contains only an image", () => {
     const viewport = el(
-      '<header><p>Unstamped journal header</p></header><div data-page-index="2"><p data-reading-anchor="before" data-reading-start="30">before</p><figure><img src="picture.png"><p data-reading-anchor="caption">Ignore caption</p></figure><p data-reading-anchor="after" data-reading-start="60">after</p></div>',
+      '<header><p>Unstamped journal header</p></header><div data-page-index="2"><p data-reading-anchor="before" data-reading-start="30">before</p><figure><img src="picture.png"><figcaption><p data-reading-anchor="caption">Ignore caption</p></figcaption></figure><p data-reading-anchor="after" data-reading-start="60">after</p></div>',
     );
     document.body.append(viewport);
     vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({
