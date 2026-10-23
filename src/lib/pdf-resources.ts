@@ -4,7 +4,7 @@ const cmapUrls = import.meta.glob<string>(
   { query: "?url", import: "default", eager: true },
 );
 const fontUrls = import.meta.glob<string>(
-  "/node_modules/pdfjs-dist/standard_fonts/*",
+  "/node_modules/pdfjs-dist/standard_fonts/*.{pfb,ttf}",
   { query: "?url", import: "default", eager: true },
 );
 

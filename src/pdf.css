@@ -94,13 +94,13 @@ figure {
   min-width: 0;
 }
 .toolbar-center {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+  position: static;
+  margin-left: auto;
+  margin-right: auto;
   gap: 4px;
 }
 .toolbar-right {
-  margin-left: auto;
+  margin-left: 0;
   gap: 6px;
 }
 .pdf-tool {

@@ -8,9 +8,29 @@ export interface ReadingProgress {
   updatedAt: number;
 }
 
+/** Page destinations must reveal the correct column in an overflowing spread. */
+export function pageHorizontalScroll(root: HTMLElement, page: number): number {
+  const frame = root.querySelector<HTMLElement>(`[data-page-index="${page}"]`);
+  if (!frame) return root.scrollLeft;
+  const bounds = root.getBoundingClientRect();
+  const target = frame.getBoundingClientRect();
+  if (target.left >= bounds.left && target.right <= bounds.right) return root.scrollLeft;
+  const padding = Number.parseFloat(getComputedStyle(root).paddingLeft) || 0;
+  return Math.max(0, root.scrollLeft + target.left - bounds.left - padding);
+}
+
 export function findChapterFragment(root: HTMLElement, chapterIndex: number, fragment: string): HTMLElement | null {
   return [...root.querySelectorAll<HTMLElement>("[id][data-source-chapter]")]
     .find(node => node.id === fragment && Number(node.dataset.sourceChapter) === chapterIndex) ?? null;
+}
+
+/** Chapters can start halfway down a page shared with the previous chapter. */
+export function findChapterTarget(root: HTMLElement, chapterIndex: number, fragment?: string): HTMLElement | null {
+  const fragmentTarget = fragment ? findChapterFragment(root, chapterIndex, fragment) : null;
+  return fragmentTarget ?? [...root.querySelectorAll<HTMLElement>("[data-pdf-chapter]")]
+    .find(node => Number(node.dataset.pdfChapter) === chapterIndex) ??
+    [...root.querySelectorAll<HTMLElement>("h1[data-source-chapter],h2[data-source-chapter],h3[data-source-chapter],h4[data-source-chapter],h5[data-source-chapter],h6[data-source-chapter]")]
+      .find(node => Number(node.dataset.sourceChapter) === chapterIndex) ?? null;
 }
 
 export function progressToPage(percent: number, total: number) {

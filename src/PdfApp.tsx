@@ -57,11 +57,14 @@ import { useCoverDocument } from "./lib/use-cover-document";
 import { useWordPages } from "./lib/use-word-pages";
 import { canAutoCoverOnPointerLeave } from "./lib/auto-cover";
 import { PdfCanvasPage } from "./components/CoverPdfPages";
+import { buildReadingBlocks } from "./lib/reading-document";
+import { loadPdfOutline, searchPdfDocument, type PdfOutlineItem, type PdfSearchMatch, type PdfDestination } from "./lib/pdf-navigation";
+import { waitForPdfPrintReady } from "./lib/print-readiness";
 import { ReaderPreferencesDialog } from "./components/ReaderPreferencesDialog";
 import { readReaderPreferences, writeReaderPreferences, typographyStyle, type ReaderPreferences } from "./lib/reader-preferences";
 import { ReaderMarksPanel } from "./components/ReaderMarksPanel";
 import { applyMarksToHtml, captureTextSelection, createBookmark, createHighlight, readMarks, writeMarks, exportMarksMarkdown, serializeMarks, importMarks, MAX_MARKS_BACKUP_BYTES, MAX_READER_MARKS, type CapturedTextSelection, type ReaderMark } from "./lib/reader-marks";
-import { findChapterFragment, readReadingProgress, writeReadingProgress, pageToProgress, progressToPage } from "./lib/reader-navigation";
+import { findChapterFragment, findChapterTarget, pageHorizontalScroll, readReadingProgress, writeReadingProgress, pageToProgress, progressToPage } from "./lib/reader-navigation";
 import "./reader-tools.css";
 
 const NO_MARKS: ReaderMark[] = [];
@@ -187,7 +190,13 @@ export default function PdfApp() {
   const [showFigures, setShowFigures] = useState(
     get("paper-pdf-figures") !== "false",
   );
-  const [showImages, setShowImages] = useState(get("paper-pdf-images") !== "false");
+  const [bookShowImages, setBookShowImages] = useState(get("paper-pdf-images") !== "false");
+  const [coverShowImages, setCoverShowImages] = useState(get("paper-pdf-cover-images") !== "false");
+  const [printing, setPrinting] = useState(false);
+  const printController = useRef<AbortController | null>(null);
+  const [pdfOutline, setPdfOutline] = useState<PdfOutlineItem[]>([]);
+  const [pdfOutlineLoading, setPdfOutlineLoading] = useState(false);
+  const [pdfSearchState, setPdfSearchState] = useState<{ source: unknown; query: string; matches: PdfSearchMatch[]; loading: boolean }>({ source: null, query: "", matches: [], loading: false });
   const [autoCoverEnabled, setAutoCoverEnabled] = useState(
     get("paper-pdf-auto-cover") !== "false",
   );
@@ -236,21 +245,24 @@ export default function PdfApp() {
   const contentClickRef = useRef<(event: React.MouseEvent<HTMLElement>) => void>(() => {});
   const handleContentClick = useCallback((event: React.MouseEvent<HTMLElement>) => contentClickRef.current(event), []);
   const pendingReadingAnchor = useRef<ReadingAnchor | null>(null);
+  const pendingMarkJump = useRef<ReaderMark | null>(null);
+  const [markJumpRevision, setMarkJumpRevision] = useState(0);
   const pendingCoverAnchor = useRef<ReadingAnchor | null>(null);
   const originalPosition = useRef<{ fraction: number; page: number; anchor: ReadingAnchor | null }>({ fraction: 0, page: 0, anchor: null });
   const coverPosition = useRef<{ fraction: number; page: number; anchor: ReadingAnchor | null }>({ fraction: 0, page: 0, anchor: null });
   const notify = useCallback((text: string) => setNotice(text), []);
   const { cover, loading: coverLoading, importCover, resetCover } = useCoverDocument(notify);
-  const wordPages = useWordPages(cover?.document ?? null, showImages, notify);
+  const wordPages = useWordPages(cover?.document ?? null, coverShowImages, notify);
+  const showImages = concealed ? coverShowImages : bookShowImages;
   const chosenCoverPages = useMemo(() => cover?.document.kind === "pdf"
     ? Array.from({ length: cover.document.pdf.numPages }, () => ({ html: "", chapterIndex: 0, chapterIndices: [0] }))
     : cover?.document.kind === "docx" ? wordPages.pages : referencePages, [cover, wordPages.pages, referencePages]);
-  const effectiveMetadata = concealed ? DEFAULT_DOCUMENT_METADATA : metadata;
+  const effectiveMetadata = metadata;
   const pages = concealed ? chosenCoverPages : documentState.pages;
   const ready = concealed
     ? chosenCoverPages.length > 0
     : documentState.id === book.id && documentState.pages.length > 0;
-  const bookLayoutKey = JSON.stringify([book.id, metadata, showFigures, showImages, typography]);
+  const bookLayoutKey = JSON.stringify([book.id, showFigures, bookShowImages, typography]);
   const paginating = paginationRunning || documentState.layoutKey !== bookLayoutKey;
   const columns = spread && viewport.width >= 760 ? 2 : 1;
   const fitWidth = Math.max(
@@ -265,6 +277,8 @@ export default function PdfApp() {
         : Math.max(0.25, Math.min(2.5, Number(zoom) / 100 || fitWidth));
   const pageTotal = pages.length;
   const coverIsPdf = concealed && cover?.document.kind === "pdf";
+  const selectedPdf = cover?.document.kind === "pdf" ? cover.document.pdf : null;
+  const activePdf = coverIsPdf ? selectedPdf : null;
   const activePaginating = concealed ? cover?.document.kind === "docx" && wordPages.paginating : paginating;
   const imageToggleDisabled = coverIsPdf || (concealed && !cover) || activePaginating || !ready;
   const coverReady = chosenCoverPages.length > 0 && !(
@@ -298,7 +312,8 @@ export default function PdfApp() {
   useEffect(() => {
     put("paper-pdf-figures", String(showFigures));
   }, [showFigures]);
-  useEffect(() => { put("paper-pdf-images", String(showImages)); }, [showImages]);
+  useEffect(() => { put("paper-pdf-images", String(bookShowImages)); }, [bookShowImages]);
+  useEffect(() => { put("paper-pdf-cover-images", String(coverShowImages)); }, [coverShowImages]);
   useEffect(() => { put("paper-pdf-auto-cover", String(autoCoverEnabled)); }, [autoCoverEnabled]);
   useEffect(() => {
     setMarkState({ bookId: book.id, marks: readMarks(book.id) });
@@ -359,19 +374,19 @@ export default function PdfApp() {
   useEffect(() => {
     const controller = new AbortController();
     paginateBlocks(
-      stampReadingAnchors(buildDocumentBlocks(paperDemoBook, DEFAULT_DOCUMENT_METADATA, true)),
+      stampReadingAnchors(buildDocumentBlocks(paperDemoBook, metadata, true)),
       { signal: controller.signal },
     )
       .then(setReferencePages)
       .catch(() => {});
     return () => controller.abort();
-  }, []);
+  }, [metadata]);
   useEffect(() => {
     const controller = new AbortController();
     setPaginating(true);
     setPaginationProgress(0);
-    const stamped = stampReadingAnchors(buildDocumentBlocks(book, metadata, true));
-    paginateBlocks(applyFigureVisibility(stamped, { images: showImages, generated: showFigures }), {
+    const stamped = buildReadingBlocks(book);
+    paginateBlocks(applyFigureVisibility(stamped, { images: bookShowImages, generated: showFigures }), {
       signal: controller.signal,
       onProgress: setPaginationProgress,
       typography,
@@ -389,7 +404,7 @@ export default function PdfApp() {
         }
       });
     return () => controller.abort();
-  }, [book, metadata, showFigures, showImages, typography, bookLayoutKey, notify]);
+  }, [book, showFigures, bookShowImages, typography, bookLayoutKey, notify]);
 
   const goToPage = useCallback(
     (value: number, behavior: ScrollBehavior = "auto") => {
@@ -397,6 +412,7 @@ export default function PdfApp() {
       if (!pages.length) return;
       viewportRef.current?.scrollTo({
         top: Math.floor(index / columns) * (PAGE_HEIGHT * scale + 12),
+        left: pageHorizontalScroll(viewportRef.current, index),
         behavior,
       });
       setCurrentPage(index);
@@ -404,6 +420,46 @@ export default function PdfApp() {
     },
     [pages.length, columns, scale],
   );
+
+  const goToPdfDestination = useCallback((target: PdfDestination) => {
+    const index = Math.max(0, Math.min(pages.length - 1, target.page));
+    const top = Math.max(0, Math.min(1, target.top ?? 0));
+    viewportRef.current?.scrollTo({ top: Math.floor(index / columns) * (PAGE_HEIGHT * scale + 12) + top * PAGE_HEIGHT * scale, left: pageHorizontalScroll(viewportRef.current, index) });
+    setCurrentPage(index);
+    setPageInput(String(index + 1));
+  }, [pages.length, columns, scale]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setPdfOutline([]);
+    if (!selectedPdf) { setPdfOutlineLoading(false); return; }
+    setPdfOutlineLoading(true);
+    void loadPdfOutline(selectedPdf, controller.signal).then(items => {
+      if (!controller.signal.aborted) setPdfOutline(items);
+    }).catch(error => { if (!controller.signal.aborted) notify(errorText(error)); })
+      .finally(() => { if (!controller.signal.aborted) setPdfOutlineLoading(false); });
+    return () => controller.abort();
+  }, [selectedPdf, notify]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    if (!activePdf || !findOpen || !deferredQuery) {
+      setPdfSearchState({ source: activePdf, query: deferredQuery, matches: [], loading: false });
+      return;
+    }
+    setPdfSearchState({ source: activePdf, query: deferredQuery, matches: [], loading: true });
+    const timer = setTimeout(() => {
+      void searchPdfDocument(activePdf, deferredQuery, controller.signal).then(matches => {
+        if (!controller.signal.aborted) setPdfSearchState({ source: activePdf, query: deferredQuery, matches, loading: false });
+      }).catch(error => {
+        if (!controller.signal.aborted) {
+          setPdfSearchState({ source: activePdf, query: deferredQuery, matches: [], loading: false });
+          notify(errorText(error));
+        }
+      });
+    }, 180);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [activePdf, findOpen, deferredQuery, notify]);
 
   useLayoutEffect(() => {
     if (!concealed || cover?.document.kind !== "docx" || !ready || wordPages.paginating) return;
@@ -535,6 +591,28 @@ export default function PdfApp() {
     if (index !== null) setCurrentPage(index);
     else goToPage(location.page);
   }, [goToPage]);
+
+  useLayoutEffect(() => {
+    if (!pendingMarkJump.current || concealed || paginating || !ready) return;
+    let secondFrame = 0;
+    const frame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        const mark = pendingMarkJump.current;
+        const root = viewportRef.current;
+        if (!mark || !root) return;
+        pendingMarkJump.current = null;
+        const index = restoreReadingAnchor(root, mark.anchor);
+        if (index !== null) setCurrentPage(index);
+        else {
+          const heading = findChapterTarget(root, mark.chapterIndex);
+          if (heading) { heading.scrollIntoView({ block: "start", inline: "nearest" }); setCurrentPage(Number(heading.closest<HTMLElement>("[data-page-index]")?.dataset.pageIndex) || 0); }
+          else goToPage(Math.max(0, pages.findIndex(page => page.chapterIndices.includes(mark.chapterIndex))));
+          notify("旧书签的文字位置已失效，已定位到对应章节。请重新添加此书签。");
+        }
+      });
+    });
+    return () => { cancelAnimationFrame(frame); cancelAnimationFrame(secondFrame); };
+  }, [markJumpRevision, scale, columns, sidebar, concealed, paginating, ready, pages, goToPage, notify]);
   const navigateHistory = useCallback((direction: "back" | "forward") => {
     const stack = direction === "back" ? backStack : forwardStack;
     const location = stack.at(-1);
@@ -579,7 +657,8 @@ export default function PdfApp() {
         (Number(element.dataset.readingStart) || 0) + (element.textContent?.length || 0) > anchor.offset);
     const quote = (node?.textContent || "").slice(Math.max(0, anchor.offset - (Number(node?.dataset.readingStart) || 0)), Math.max(0, anchor.offset - (Number(node?.dataset.readingStart) || 0)) + 140);
     const existing = marks.find(mark => mark.kind === "bookmark" && mark.anchor.id === anchor.id && Math.abs(mark.anchor.offset - anchor.offset) < 10);
-    const mark = existing || createBookmark(anchor, currentChapterIndex, quote);
+    const sourceChapter = /^c(\d+)-/.exec(anchor.id);
+    const mark = existing || createBookmark(anchor, sourceChapter ? Number(sourceChapter[1]) : currentChapterIndex, quote);
     if (!existing) updateMarks([...marks, mark]);
     setSelectedMark(mark.id); setSidebarTab("marks"); setSidebar(true);
   };
@@ -615,6 +694,9 @@ export default function PdfApp() {
   };
 
   const toggleReference = useCallback(() => {
+    printController.current?.abort();
+    setPrinting(false);
+    pendingMarkJump.current = null;
     saveCurrentProgress();
     setMenuOpen(false);
     setFindOpen(false);
@@ -672,7 +754,7 @@ export default function PdfApp() {
         importing,
         coverLoading,
         coverSettingsOpen,
-        propertiesOpen: propertiesOpen || preferencesOpen,
+        propertiesOpen: propertiesOpen || preferencesOpen || printing,
         imageOpen: Boolean(image),
         dragging,
       }, event)) return;
@@ -691,6 +773,7 @@ export default function PdfApp() {
     coverSettingsOpen,
     propertiesOpen,
     preferencesOpen,
+    printing,
     image,
     dragging,
     toggleReference,
@@ -700,7 +783,7 @@ export default function PdfApp() {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const typing = target?.closest(
-        "input, textarea, select, button, a, [contenteditable]:not([contenteditable='false'])",
+        "input, textarea, select, [contenteditable]:not([contenteditable='false'])",
       );
       if (
         event.key.toLowerCase() === "q" &&
@@ -720,7 +803,7 @@ export default function PdfApp() {
         ["f", "k"].includes(event.key.toLowerCase())
       ) {
         event.preventDefault();
-        if (!coverIsPdf) setFindOpen(true);
+        setFindOpen(true);
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "o") {
         event.preventDefault();
@@ -773,21 +856,24 @@ export default function PdfApp() {
     };
   }, [propertiesOpen, image, coverSettingsOpen, preferencesOpen]);
 
-  const matches = useMemo(() => {
+  const pdfSearching = Boolean(activePdf && findOpen && deferredQuery && (pdfSearchState.source !== activePdf || pdfSearchState.query !== deferredQuery || pdfSearchState.loading));
+  const matches = useMemo((): { page: number; occurrence: number; top?: number }[] => {
     if (!deferredQuery) return [];
+    if (activePdf) return pdfSearchState.source === activePdf && pdfSearchState.query === deferredQuery ? pdfSearchState.matches : [];
     return pages.flatMap((page, index) =>
       findHtmlMatches(page.html, deferredQuery).map((match) => ({
         page: index,
         occurrence: match.id,
       })),
     );
-  }, [pages, deferredQuery]);
+  }, [pages, deferredQuery, activePdf, pdfSearchState]);
   const jumpToMatch = useCallback(
     (index: number) => {
       if (!matches.length) return;
       rememberLocation();
       const next = (index + matches.length) % matches.length;
       setMatchIndex(next);
+      if (activePdf) { goToPdfDestination(matches[next]); return; }
       goToPage(matches[next].page);
       requestAnimationFrame(() =>
         viewportRef.current
@@ -797,7 +883,7 @@ export default function PdfApp() {
           ?.scrollIntoView({ block: "center", inline: "nearest" }),
       );
     },
-    [matches, goToPage, rememberLocation],
+    [matches, goToPage, rememberLocation, activePdf, goToPdfDestination],
   );
   const previousMatches = useRef(matches);
   useEffect(() => {
@@ -916,25 +1002,36 @@ export default function PdfApp() {
       setQuery("");
       setImage(null);
     } else preserveReadingPosition();
-    setShowImages(value => !value);
+    if (concealed) setCoverShowImages(value => !value);
+    else setBookShowImages(value => !value);
     setMenuOpen(false);
   };
   const openCoverSettings = () => { setCoverSettingsOpen(true); setMenuOpen(false); };
-  const printCurrentDocument = () => {
-    if (coverIsPdf && cover) {
-      const url = URL.createObjectURL(cover.source.blob);
-      window.open(url, "_blank", "noopener,noreferrer");
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-    } else window.print();
+  const printCurrentDocument = async () => {
+    if (printing || !ready || activePaginating) return;
+    const controller = new AbortController();
+    printController.current?.abort();
+    printController.current = controller;
+    setPrinting(true);
+    try {
+      if (activePdf && viewportRef.current) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        await waitForPdfPrintReady(viewportRef.current, activePdf.numPages, controller.signal);
+      }
+      if (!controller.signal.aborted) window.print();
+    } catch (error) { if (!controller.signal.aborted) notify(errorText(error)); }
+    finally { if (printController.current === controller) { printController.current = null; setPrinting(false); } }
   };
   const downloadCurrentDocument = () => {
-    if (!coverIsPdf || !cover) { printCurrentDocument(); return; }
+    if (!coverIsPdf || !cover) { void printCurrentDocument(); return; }
     const url = URL.createObjectURL(cover.source.blob);
     const link = document.createElement("a");
     link.href = url; link.download = cover.document.filename; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   useEffect(() => {
+    printController.current?.abort();
+    setPrinting(false);
     coverPosition.current = { fraction: 0, page: 0, anchor: null };
     pendingCoverAnchor.current = null;
     if (concealed) { setCurrentPage(0); viewportRef.current?.scrollTo({ top: 0 }); }
@@ -944,6 +1041,19 @@ export default function PdfApp() {
     setZoom(String(Math.max(25, Math.min(250, percent + delta))));
   };
   const outline = (concealed ? cover ? { toc: [] } : paperDemoBook : book).toc;
+  const wordOutline = useMemo(() => {
+    if (cover?.document.kind !== "docx") return [];
+    const seen = new Set<string>();
+    return wordPages.pages.flatMap((page, pageIndex) => {
+      const template = document.createElement("template"); template.innerHTML = page.html;
+      return [...template.content.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6")].flatMap(heading => {
+        const anchor = heading.dataset.readingAnchor;
+        if (!anchor || seen.has(anchor)) return [];
+        seen.add(anchor);
+        return [{ title: heading.textContent?.trim() || "未命名标题", page: pageIndex, anchor, depth: Number(heading.tagName.slice(1)) - 1 }];
+      });
+    });
+  }, [cover, wordPages.pages]);
   const chapterPage = (id: string, fragment?: string) => {
     const currentBook = concealed ? paperDemoBook : book;
     const index = currentBook.chapters.findIndex(
@@ -952,7 +1062,7 @@ export default function PdfApp() {
     const first = pages.findIndex((page) =>
       page.chapterIndices.includes(index),
     );
-    const target = fragment && viewportRef.current ? findChapterFragment(viewportRef.current, index, fragment) : null;
+    const target = viewportRef.current ? findChapterTarget(viewportRef.current, index, fragment) : null;
     if (first < 0 && !target) return;
     rememberLocation();
     if (target) {
@@ -1017,6 +1127,7 @@ export default function PdfApp() {
   };
   useEffect(() => {
     const onReadingKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p") { event.preventDefault(); void printCurrentDocument(); return; }
       const target = event.target as HTMLElement | null;
       if (event.defaultPrevented || event.isComposing || target?.closest("input,textarea,select,button,a,[contenteditable]:not([contenteditable='false'])") || propertiesOpen || preferencesOpen || coverSettingsOpen || image || !ready || activePaginating) return;
       const key = event.key;
@@ -1184,7 +1295,7 @@ export default function PdfApp() {
             className={`pdf-tool ${findOpen ? "pressed" : ""}`}
             aria-label="查找"
             title="查找 (Ctrl+F)"
-            disabled={coverIsPdf}
+            disabled={!ready}
             onClick={() => setFindOpen((value) => !value)}
           >
             <Search size={19} />
@@ -1223,17 +1334,17 @@ export default function PdfApp() {
             className="pdf-tool"
             aria-label="打印"
             title="打印"
-            onClick={printCurrentDocument}
-            disabled={!ready || activePaginating}
+            onClick={() => void printCurrentDocument()}
+            disabled={!ready || activePaginating || printing}
           >
-            <Printer size={19} />
+            {printing ? <LoaderCircle size={19} className="loading-spin" /> : <Printer size={19} />}
           </button>
           <button
             className="pdf-tool optional-tool"
             aria-label="另存为 PDF"
             title="另存为 PDF"
             onClick={downloadCurrentDocument}
-            disabled={!ready || activePaginating}
+            disabled={!ready || activePaginating || printing}
           >
             <Download size={19} />
           </button>
@@ -1264,7 +1375,7 @@ export default function PdfApp() {
             }}
           />
           <span className="find-count">
-            {query.trim()
+            {pdfSearching ? "查找中…" : query.trim()
               ? matches.length
                 ? `${matchIndex + 1} / ${matches.length}`
                 : "未找到"
@@ -1424,7 +1535,10 @@ export default function PdfApp() {
               </div>
               {sidebarTab === "outline" ? (
                 <nav aria-label="文档大纲">
-                  {concealed && cover && pages.map((_, index) => <button key={index} className="outline-item" onClick={() => { goToPage(index); if (innerWidth < 760) setSidebar(false); }}><span>第 {index + 1} 页</span><small>{index + 1}</small></button>)}
+                  {coverIsPdf && pdfOutlineLoading && <p className="reader-search-status" role="status">正在读取 PDF 目录…</p>}
+                  {coverIsPdf && pdfOutline.map(item => <button key={item.id} className="outline-item" aria-current={currentPage === item.page ? "location" : undefined} style={{ paddingLeft: 15 + item.depth * 13 }} onClick={() => { goToPdfDestination(item); if (innerWidth < 760) setSidebar(false); }}><span>{item.title}</span><small>{item.page + 1}</small></button>)}
+                  {concealed && cover?.document.kind === "docx" && wordOutline.map(item => <button key={item.anchor} className="outline-item" style={{ paddingLeft: 15 + item.depth * 13 }} onClick={() => { const index = viewportRef.current ? restoreReadingAnchor(viewportRef.current, { id: item.anchor, offset: 0, viewportY: 0 }) : null; if (index !== null) setCurrentPage(index); else goToPage(item.page); if (innerWidth < 760) setSidebar(false); }}><span>{item.title}</span><small>{item.page + 1}</small></button>)}
+                  {concealed && cover && !pdfOutlineLoading && (coverIsPdf ? !pdfOutline.length : !wordOutline.length) && <><p className="reader-search-status">此文档没有内置目录，按页浏览。</p>{pages.map((_, index) => <button key={index} className="outline-item" onClick={() => { goToPage(index); if (innerWidth < 760) setSidebar(false); }}><span>第 {index + 1} 页</span><small>{index + 1}</small></button>)}</>}
                   {outline.map((item, index) => (
                     <button
                       key={`${item.chapterId}-${index}`}
@@ -1455,7 +1569,7 @@ export default function PdfApp() {
               ) : sidebarTab === "marks" && !concealed ? (
                 <ReaderMarksPanel marks={marks} chapterNames={book.chapters.map(chapter => chapter.title)} selectedId={selectedMark}
                   onSelect={id => setSelectedMark(id ?? undefined)}
-                  onJump={mark => { rememberLocation(); restoreLocation({ anchor: mark.anchor, page: Math.max(0, pages.findIndex(page => page.chapterIndices.includes(mark.chapterIndex))) }); if (innerWidth < 760) setSidebar(false); }}
+                  onJump={mark => { rememberLocation(); pendingMarkJump.current = mark; setMarkJumpRevision(value => value + 1); if (innerWidth < 760) setSidebar(false); }}
                   onRemove={id => { updateMarks(marks.filter(mark => mark.id !== id)); if (selectedMark === id) setSelectedMark(undefined); }}
                   onUpdate={(id, patch) => { updateMarks(marks.map(mark => mark.id === id ? { ...mark, ...patch } : mark)); notify("批注已保存。"); }}
                   onAddBookmark={addBookmark} onAddSelection={addSelection} onExport={exportNotes} onImport={file => void importNotes(file)} disabled={paginating || !ready} />
@@ -1555,7 +1669,7 @@ export default function PdfApp() {
               style={{ "--page-columns": columns } as CSSProperties}
             >
               {pages.map((page, index) => coverIsPdf && cover?.document.kind === "pdf" ? (
-                <div className="pdf-page-frame" key={`cover-pdf-${index}`} data-page-index={index} style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }}><PdfCanvasPage pdf={cover.document.pdf} index={index} scale={scale} /></div>
+                <div className="pdf-page-frame" key={`cover-pdf-${index}`} data-page-index={index} style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }}><PdfCanvasPage pdf={cover.document.pdf} index={index} scale={scale} onNavigate={goToPdfDestination} query={findOpen ? deferredQuery : ""} activeMatch={matches[matchIndex]?.page === index ? matches[matchIndex].occurrence : undefined} forceRender={printing} /></div>
               ) : (
                 <PageSheet
                   key={`${concealed ? "reference" : book.id}-${index}`}
@@ -1568,7 +1682,7 @@ export default function PdfApp() {
                   onContentClick={handleContentClick}
                   marks={concealed ? NO_MARKS : marks}
                   preferences={concealed ? undefined : preferences}
-                  sourceFilename={concealed && cover ? cover.document.filename : undefined}
+                  sourceFilename={concealed && cover ? cover.document.filename : !concealed ? metadata.filename : undefined}
                 />
               ))}
             </div>
@@ -1599,7 +1713,7 @@ export default function PdfApp() {
         if (next.fontSize !== preferences.fontSize || next.lineHeight !== preferences.lineHeight || next.fontFamily !== preferences.fontFamily) preserveReadingPosition();
         setPreferences(next); if (!writeReaderPreferences(next)) notify("阅读设置暂时无法持久保存。"); setPreferencesOpen(false);
       }} />}
-      {notice && (!concealed || coverSettingsOpen) && (
+      {notice && (
         <div className="pdf-notice" role="alert">
           <span>{notice}</span>
           <button
@@ -1657,7 +1771,6 @@ export default function PdfApp() {
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                if (!concealed) preserveReadingPosition();
                 const next = Object.fromEntries(
                   Object.entries(draft).map(([key, value]) => [
                     key,

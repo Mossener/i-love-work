@@ -1,8 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { stampReadingAnchors } from "./reading-position";
-import { findChapterFragment, progressToPage, pageToProgress, readReadingProgress, writeReadingProgress } from "./reader-navigation";
+import { findChapterFragment, findChapterTarget, pageHorizontalScroll, progressToPage, pageToProgress, readReadingProgress, writeReadingProgress } from "./reader-navigation";
 
 describe("reader navigation", () => {
+  it("brings a right-hand page into view when a zoomed spread overflows horizontally", () => {
+    const root = document.createElement("div");
+    root.style.paddingLeft = "18px";
+    root.innerHTML = '<article data-page-index="1"></article>';
+    root.getBoundingClientRect = () => ({ left: 262, right: 1440 } as DOMRect);
+    const frame = root.firstElementChild as HTMLElement;
+    frame.getBoundingClientRect = () => ({ left: 1880, right: 3468 } as DOMRect);
+    expect(pageHorizontalScroll(root, 1)).toBe(1600);
+    root.scrollLeft = 1600;
+    frame.getBoundingClientRect = () => ({ left: 280, right: 1868 } as DOMRect);
+    expect(pageHorizontalScroll(root, 1)).toBe(1600);
+    frame.getBoundingClientRect = () => ({ left: 280, right: 840 } as DOMRect);
+    expect(pageHorizontalScroll(root, 1)).toBe(1600);
+    expect(pageHorizontalScroll(root, 99)).toBe(1600);
+  });
   it("resolves duplicate source IDs only within the requested chapter", () => {
     const root = document.createElement("div");
     root.innerHTML = stampReadingAnchors([
@@ -11,6 +26,21 @@ describe("reader navigation", () => {
     ]).map(block => block.html).join("");
     expect(findChapterFragment(root, 1, "note")?.textContent).toBe("Second note");
     expect(findChapterFragment(root, 9, "note")).toBeNull();
+  });
+
+  it("targets a chapter's heading rather than the preceding chapter on its shared page", () => {
+    const root = document.createElement("div");
+    root.innerHTML = '<article data-page-index="4"><p>End of the previous chapter</p><h2 data-pdf-chapter="2">New chapter</h2><p id="note" data-source-chapter="2">Footnote destination</p></article>';
+    expect(findChapterTarget(root, 2)?.textContent).toBe("New chapter");
+    expect(findChapterTarget(root, 2, "note")?.textContent).toBe("Footnote destination");
+    expect(findChapterTarget(root, 2, "missing")?.textContent).toBe("New chapter");
+    expect(findChapterTarget(root, 8)).toBeNull();
+  });
+
+  it("uses an original source heading when no generated chapter heading remains", () => {
+    const root = document.createElement("div");
+    root.innerHTML = '<h2 data-source-chapter="0">Previous chapter</h2><h3 data-source-chapter="1">Source chapter heading</h3><p data-source-chapter="1">Source prose</p>';
+    expect(findChapterTarget(root, 1)?.textContent).toBe("Source chapter heading");
   });
 
   it("maps the ends of a progress slider to valid pages, including a single page", () => {

@@ -1,0 +1,37 @@
+.pdf-original-link-layer,
+.pdf-original-search-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pdf-original-search-mark {
+  position: absolute;
+  background: #ffdf4b88;
+  mix-blend-mode: multiply;
+  border-radius: 1px;
+}
+
+.pdf-original-search-mark.active {
+  background: #ff9b2699;
+  outline: 1px solid #b96214;
+}
+
+.pdf-original-page-link {
+  position: absolute;
+  display: block;
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 1px;
+}
+
+.pdf-original-page-link:hover,
+.pdf-original-page-link:focus-visible {
+  background: #4689e82b;
+  outline: 2px solid #3779c5;
+}
+
+@media print {
+  .pdf-original-search-layer,
+  .pdf-original-link-layer { display: none; }
+}
