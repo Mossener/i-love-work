@@ -1,7 +1,7 @@
 {
   "name": "i-love-work",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -10,6 +10,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
     "test:server": "node --test scripts/reader-server.test.mjs",
+    "test:tray": "node --test scripts/reader-tray.test.mjs",
     "package:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1"
   },
   "dependencies": {

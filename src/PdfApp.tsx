@@ -27,6 +27,7 @@ import {
   LoaderCircle,
   Minus,
   MoreHorizontal,
+  PanelBottom,
   PanelLeft,
   Plus,
   Printer,
@@ -62,6 +63,7 @@ import { buildReadingBlocks } from "./lib/reading-document";
 import { loadPdfOutline, searchPdfDocument, type PdfOutlineItem, type PdfSearchMatch, type PdfDestination } from "./lib/pdf-navigation";
 import { waitForPdfPrintReady } from "./lib/print-readiness";
 import { ReaderPreferencesDialog } from "./components/ReaderPreferencesDialog";
+import { documentScale, useBrowserZoom } from "./lib/use-browser-zoom";
 import { readReaderPreferences, writeReaderPreferences, typographyStyle, type ReaderPreferences } from "./lib/reader-preferences";
 import { ReaderMarksPanel } from "./components/ReaderMarksPanel";
 import { applyMarksToHtml, captureTextSelection, createBookmark, createHighlight, readMarks, writeMarks, exportMarksMarkdown, serializeMarks, importMarks, MAX_MARKS_BACKUP_BYTES, MAX_READER_MARKS, type CapturedTextSelection, type ReaderMark } from "./lib/reader-marks";
@@ -176,6 +178,7 @@ export default function PdfApp() {
   const [metadata, setMetadata] = useState<DocumentMetadata>(readMetadata);
   const [preferences, setPreferences] = useState(readReaderPreferences);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [readerToolbarOpen, setReaderToolbarOpen] = useState(false);
   const typography = useMemo(() => ({ fontSize: preferences.fontSize, lineHeight: preferences.lineHeight, fontFamily: preferences.fontFamily }), [preferences.fontSize, preferences.lineHeight, preferences.fontFamily]);
   const [draft, setDraft] = useState<DocumentMetadata>(metadata);
   const [documentState, setDocumentState] = useState<{
@@ -236,6 +239,7 @@ export default function PdfApp() {
   const coverFileRef = useRef<HTMLInputElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const findRef = useRef<HTMLInputElement>(null);
+  const readerToolbarToggleRef = useRef<HTMLButtonElement>(null);
   const loadingRef = useRef(false);
   const desiredPage = useRef<number | null>(0);
   const desiredChapter = useRef<number | null>(null);
@@ -270,12 +274,8 @@ export default function PdfApp() {
     0.15,
     (viewport.width - 36 - (columns - 1) * 12) / columns / PAGE_WIDTH,
   );
-  const scale =
-    zoom === "auto" || zoom === "width"
-      ? fitWidth
-      : zoom === "page"
-        ? Math.min(fitWidth, (viewport.height - 26) / PAGE_HEIGHT)
-        : Math.max(0.25, Math.min(2.5, Number(zoom) / 100 || fitWidth));
+  const scale = documentScale(zoom, fitWidth, (viewport.height - 26) / PAGE_HEIGHT);
+  useBrowserZoom(zoom, scale, setZoom);
   const pageTotal = pages.length;
   const coverIsPdf = concealed && cover?.document.kind === "pdf";
   const selectedPdf = cover?.document.kind === "pdf" ? cover.document.pdf : null;
@@ -1185,7 +1185,7 @@ export default function PdfApp() {
         }}
       />
       <input type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" ref={coverFileRef} className="sr-only" aria-label="选择遮挡 PDF 或 Word" onChange={event => { const file = event.target.files?.[0]; if (file) void importCover(file); event.target.value = ""; }} />
-      <header className="pdf-toolbar" aria-label="文档工具栏">
+      <header className={`pdf-toolbar${concealed ? "" : " reader-toolbar"}`} aria-label="文档工具栏">
         <div className="toolbar-left">
           <button
             className={`pdf-tool ${sidebar ? "pressed" : ""}`}
@@ -1290,10 +1290,34 @@ export default function PdfApp() {
               "175",
               "200",
               "250",
-            ].includes(zoom) && <option value={zoom}>{zoom}%</option>}
+            ].includes(zoom) && <option value={zoom}>{Math.round(Number(zoom) * 100) / 100}%</option>}
           </select>
         </div>
         <div className="toolbar-right">
+          {!concealed && <>
+            <button
+              className="pdf-tool reader-typography-tool"
+              aria-label="字体与排版"
+              title="字号、字体与行距"
+              disabled={!ready || paginating}
+              onClick={() => setPreferencesOpen(true)}
+            >
+              <span className="reader-typography-symbol" aria-hidden="true">Aa</span>
+              <span className="reader-toolbar-tool-label">字体排版</span>
+            </button>
+            <button
+              ref={readerToolbarToggleRef}
+              className={`pdf-tool reader-tools-toggle ${readerToolbarOpen ? "pressed" : ""}`}
+              aria-label="切换阅读工具栏"
+              title="阅读工具栏"
+              aria-expanded={readerToolbarOpen}
+              aria-controls="reader-navigation-bar"
+              onClick={() => setReaderToolbarOpen(value => !value)}
+            >
+              <PanelBottom size={18} />
+              <span className="reader-toolbar-tool-label">阅读工具栏</span>
+            </button>
+          </>}
           <button
             className={`pdf-tool ${findOpen ? "pressed" : ""}`}
             aria-label="查找"
@@ -1449,6 +1473,7 @@ export default function PdfApp() {
             {!concealed && <button role="menuitem" onClick={() => { setSidebarTab("marks"); setSidebar(true); setMenuOpen(false); }}><BookmarkPlus size={16} />书签与批注</button>}
             <button role="menuitem" onClick={openCoverSettings}><FolderOpen size={16} />选择遮挡文档…</button>
             <hr />
+            {!concealed && <button role="menuitemcheckbox" aria-checked={readerToolbarOpen} onClick={() => { setReaderToolbarOpen(value => !value); setMenuOpen(false); }}><span className="menu-check">{readerToolbarOpen ? "✓" : ""}</span>显示阅读工具栏</button>}
             <button role="menuitemcheckbox" aria-checked={showImages} onClick={toggleImages} disabled={imageToggleDisabled}><span className="menu-check">{showImages ? "✓" : ""}</span>显示原书 / Word 正文图片</button>
             <button
               role="menuitemcheckbox"
@@ -1700,7 +1725,7 @@ export default function PdfApp() {
           )}
         </div>
       </div>
-      {!concealed && <nav className="reader-navigation-bar" aria-label="阅读导航">
+      {readerToolbarOpen && !concealed && <nav id="reader-navigation-bar" className="reader-navigation-bar" aria-label="阅读导航">
         <button aria-label="返回上次跳转位置" title="返回 (Alt+←)" disabled={!backStack.length || paginating} onClick={() => navigateHistory("back")}><ArrowLeft size={15} /></button>
         <button aria-label="前进到下次跳转位置" title="前进 (Alt+→)" disabled={!forwardStack.length || paginating} onClick={() => navigateHistory("forward")}><ArrowRight size={15} /></button>
         <button aria-label="上一章" disabled={!ready || paginating || currentChapterIndex <= 0} onClick={() => moveChapter(-1)}>上一章</button>
@@ -1710,6 +1735,7 @@ export default function PdfApp() {
         <button aria-label="添加书签" title="添加书签 (Ctrl+D)" disabled={!ready || paginating} onClick={addBookmark}><BookmarkPlus size={15} /><span className="reader-navigation-label">书签</span></button>
         <button aria-label="书签与批注" onClick={() => { setSidebarTab("marks"); setSidebar(true); }}>批注 {marks.length || ""}</button>
         <button aria-label="阅读设置" disabled={!ready || paginating} onClick={() => setPreferencesOpen(true)}><Settings2 size={15} /><span className="reader-navigation-label">阅读设置</span></button>
+        <button aria-label="关闭阅读工具栏" title="关闭阅读工具栏" onClick={() => { setReaderToolbarOpen(false); readerToolbarToggleRef.current?.focus(); }}><X size={15} /></button>
       </nav>}
       {!concealed && textSelection && !paginating && <div className="reader-selection-actions" aria-label="选文操作"><button onMouseDown={event => event.preventDefault()} onClick={addSelection}>划线并批注 · {textSelection.quote.length} 字</button><button aria-label="取消选文" onClick={() => { window.getSelection()?.removeAllRanges(); setTextSelection(null); }}><X size={14} /></button></div>}
       {preferencesOpen && !concealed && <ReaderPreferencesDialog value={preferences} onClose={() => setPreferencesOpen(false)} onApply={next => {

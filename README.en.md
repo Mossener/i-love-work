@@ -16,7 +16,7 @@ A local **EPUB / MOBI / TXT reader** with the quiet appearance of an A4 document
 
 ### Windows x64 release
 
-Current version: **v1.2.0**.
+Current version: **v1.2.1**.
 
 1. Download the **Windows x64 ZIP** from [Releases](https://github.com/Mossener/i-love-work/releases/latest).
 2. Extract the entire archive to a folder you intend to keep, such as `D:\Apps\ILoveWork`.
@@ -62,6 +62,14 @@ Use the open-file control, `Ctrl+O`, or drag and drop to import `.mobi` / `.txt`
 TXT import detects UTF-8 and BOM-marked UTF-16 LE / BE, with a fallback for common Chinese GB18030 text. Titles such as `第一章`, `第12章`, or `Chapter 1` create a chapter outline. Text without recognized headings is read as one continuous document. HTML-like text is displayed literally, not executed as a webpage. Encoding and chapter conventions vary; if text appears garbled, save it as UTF-8 and import it again.
 
 MOBI import supports common DRM-free MOBI 6 / 7 books, embedded illustrations, and outlines, with uncompressed or PalmDOC-compressed content. Outlines use the book’s HTML table of contents or headings; navigation stored only in a binary NCX index is not imported. Hybrid MOBI files use their legacy rendition. Convert pure KF8, AZW3, or HUFF/CDIC-compressed books to EPUB first; DRM decryption is unavailable. Books are reflowed into A4 pages.
+
+### Typography and reading tools
+
+In reading mode, choose **“字体排版”** in the top toolbar to adjust font size (14–24 px), line spacing (1.2–2.2), and font family (serif, sans-serif, or Kai), with a preview. “应用” applies and saves the settings while restoring your passage. Fonts use installed system fonts and fallbacks. PDF cover documents retain their original layout; use document zoom to change their display size.
+
+The bottom reading toolbar is **closed by default**. Use the top “阅读工具栏” button to show chapter navigation, progress, and bookmarks. Toggle it again or use its close button to hide it. The More menu also controls its visibility.
+
+`Ctrl` / `⌘` plus, minus, or `Ctrl` + mouse wheel lets the document scale with the browser. `Ctrl` / `⌘` + `0` resets browser zoom and restores automatic fitting. The top zoom selector also offers fit width, fit page, and fixed percentages.
 
 ### Bookmarks, notes, and reading progress
 
@@ -129,6 +137,7 @@ Open [http://127.0.0.1:5173](http://127.0.0.1:5173/). Keep the terminal open for
 npm run build     # Check TypeScript and build dist/
 npm run preview   # Preview the production build
 npm test          # Run tests
+npm run test:tray # Windows tray interaction regression tests
 ```
 
 On Windows, `start.vbs` also works from a source checkout. It serves the production build when `dist/` and the production server script are present; otherwise it uses Vite from the installed dependencies. **The source repository does not include a Node.js runtime**; it is bundled only in the Windows release ZIP. After editing source files, rebuild `dist/` or use `npm run dev`.

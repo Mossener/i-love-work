@@ -70,7 +70,7 @@ function Test-ReaderServer {
 }
 
 function Open-Reader {
-    if (-not $ready -or $NoBrowser) { return }
+    if (-not $ready) { return }
     try {
         # This is the user-facing browser, rather than a background helper.
         Start-Process -FilePath $readerUrl
@@ -181,7 +181,7 @@ try {
     $tray.Text = '我爱上班 · 阅读服务运行中'
     Write-LauncherState 'ready'
     Write-LauncherLog 'Reader is ready; tray menu has Open reader, Open logs and Exit.'
-    Open-Reader
+    if (-not $NoBrowser) { Open-Reader }
     $startedAt = [DateTime]::UtcNow
     $timer = New-Object Windows.Forms.Timer
     $timer.Interval = 250
