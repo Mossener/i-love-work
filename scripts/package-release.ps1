@@ -14,7 +14,7 @@ if (-not $OutputDirectory) { $OutputDirectory = Join-Path $projectDirectory 'out
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 $runtimeNode = Join-Path $RuntimeDirectory 'node.exe'
 $runtimeLicense = Join-Path $RuntimeDirectory 'LICENSE'
-$requiredFiles = @('dist\index.html', 'assets\icons\pdf-reader.ico', 'assets\icons\fontawesome-LICENSE.txt', 'scripts\reader-tray.ps1', 'scripts\reader-server.mjs', 'start.vbs', 'start.bat', 'README.md', 'package-lock.json')
+$requiredFiles = @('dist\index.html', 'assets\icons\pdf-reader.ico', 'assets\icons\fontawesome-LICENSE.txt', 'scripts\reader-tray.ps1', 'scripts\reader-server.mjs', 'start.vbs', 'start.bat', 'README.md', 'LICENSE', 'package-lock.json')
 foreach ($relative in $requiredFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $projectDirectory $relative) -PathType Leaf)) { throw "Missing release file: $relative. Run npm run build first." }
 }
@@ -41,7 +41,7 @@ foreach ($directory in @('dist', 'assets\icons', 'docs\images')) {
     Copy-Item -LiteralPath (Join-Path $projectDirectory $directory) -Destination (Split-Path -Parent $destination) -Recurse
 }
 [void][IO.Directory]::CreateDirectory((Join-Path $packageDirectory 'scripts'))
-foreach ($relative in @('scripts\reader-tray.ps1', 'scripts\reader-server.mjs', 'start.vbs', 'start.bat', 'README.md')) {
+foreach ($relative in @('scripts\reader-tray.ps1', 'scripts\reader-server.mjs', 'start.vbs', 'start.bat', 'README.md', 'LICENSE')) {
     Copy-Item -LiteralPath (Join-Path $projectDirectory $relative) -Destination (Join-Path $packageDirectory $relative)
 }
 if (Test-Path -LiteralPath (Join-Path $projectDirectory 'README.en.md') -PathType Leaf) {
@@ -93,6 +93,9 @@ while ($dependencyQueue.Count -gt 0) {
 $licenseIndex | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $packageDirectory 'licenses\index.json') -Encoding UTF8
 $notices = @(
     '# Third-party notices',
+    '',
+    'I Love Work application source code is released under the MIT License. The full application license is included in LICENSE at the root of this distribution.',
+    'Third-party components retain their respective licenses listed below.',
     '',
     "This I Love Work $version Windows x64 portable distribution bundles Node.js $($runtimeDetails.version).",
     'The Node.js license and bundled component notices are in runtime/LICENSE.',

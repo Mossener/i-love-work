@@ -2,6 +2,8 @@
 
 [简体中文](README.md) · [English](README.en.md)
 
+[MIT License](LICENSE)
+
 **A paper on the screen. One more chapter in mind.**
 
 A local EPUB reader with the quiet appearance of an A4 document viewer. Read the original book, then press `Q` to switch to a PDF paper or Word document you have chosen.
