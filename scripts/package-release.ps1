@@ -47,8 +47,10 @@ foreach ($relative in @('scripts\reader-tray.ps1', 'scripts\reader-server.mjs', 
 if (Test-Path -LiteralPath (Join-Path $projectDirectory 'README.en.md') -PathType Leaf) {
     Copy-Item -LiteralPath (Join-Path $projectDirectory 'README.en.md') -Destination (Join-Path $packageDirectory 'README.en.md')
 }
-if (Test-Path -LiteralPath (Join-Path $projectDirectory 'output\releases\release-notes.md') -PathType Leaf) {
-    Copy-Item -LiteralPath (Join-Path $projectDirectory 'output\releases\release-notes.md') -Destination (Join-Path $packageDirectory 'RELEASE-NOTES.md')
+$releaseNotes = Join-Path $projectDirectory ("output\releases\release-notes-v$version.md")
+if (-not (Test-Path -LiteralPath $releaseNotes -PathType Leaf)) { $releaseNotes = Join-Path $projectDirectory 'output\releases\release-notes.md' }
+if (Test-Path -LiteralPath $releaseNotes -PathType Leaf) {
+    Copy-Item -LiteralPath $releaseNotes -Destination (Join-Path $packageDirectory 'RELEASE-NOTES.md')
 }
 [void][IO.Directory]::CreateDirectory((Join-Path $packageDirectory 'runtime'))
 Copy-Item -LiteralPath $runtimeNode -Destination (Join-Path $packageDirectory 'runtime\node.exe')

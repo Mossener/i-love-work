@@ -6,7 +6,7 @@
 
 **A paper on the screen. One more chapter in mind.**
 
-A local EPUB reader with the quiet appearance of an A4 document viewer. Read the original book, then press `Q` to switch to a PDF paper or Word document you have chosen.
+A local **EPUB / MOBI / TXT reader** with the quiet appearance of an A4 document viewer. Read the original book, then press `Q` to switch to a PDF paper or Word document you have chosen.
 
 [Download for Windows](https://github.com/Mossener/i-love-work/releases/latest) · [Quick start](#quick-start) · [Keyboard shortcuts](#keyboard-shortcuts) · [Run from source](#run-from-source)
 
@@ -16,12 +16,12 @@ A local EPUB reader with the quiet appearance of an A4 document viewer. Read the
 
 ### Windows x64 release
 
-Current version: **v1.1.0**.
+Current version: **v1.2.0**.
 
 1. Download the **Windows x64 ZIP** from [Releases](https://github.com/Mossener/i-love-work/releases/latest).
 2. Extract the entire archive to a folder you intend to keep, such as `D:\Apps\ILoveWork`.
 3. Double-click **`start.vbs`**. Your default browser opens [http://127.0.0.1:5173](http://127.0.0.1:5173/), and the app stays in the Windows **system tray** at the bottom right.
-4. Open an EPUB or drag one onto the page.
+4. Open an **`.epub`, `.mobi`, or `.txt`** book, or drag one onto the page.
 
 The release includes a Node.js runtime and the built application. **No separate Node.js installation or npm commands are needed, and normal startup leaves no command window open.** `start.bat` forwards to the same tray launcher. Extract the complete folder first; do not run from inside the ZIP or copy the launcher on its own.
 
@@ -41,7 +41,7 @@ Logs are stored in `%LOCALAPPDATA%\ILoveWork\<instance directory>\`. The default
 
 | Read your book | Use a cover document |
 | --- | --- |
-| EPUB 2 / EPUB 3 with chapter, footnote, and endnote navigation | Choose a local PDF or Word `.docx`, or use the built-in paper |
+| EPUB 2 / EPUB 3, MOBI, and TXT with chapter outlines and navigation | Choose a local PDF or Word `.docx`, or use the built-in paper |
 | Font size, line spacing, font family, and paper / sepia / dark themes | Preserve a PDF’s original layout, outline, and page links |
 | Bookmarks, highlights, notes, search, and reading progress | Search PDF text with highlights; navigate Word headings and search its text |
 | Text anchors restore your passage after image or typography changes | Press `Q` to switch; optionally cover when the pointer leaves the page |
@@ -49,18 +49,26 @@ Logs are stored in `%LOCALAPPDATA%\ILoveWork\<instance directory>\`. The default
 
 ### Your book stays separate from the paper template
 
-EPUB mode retains the book’s text and illustrations. **It does not insert the cover paper’s title, abstract, or keywords.** The built-in paper and your chosen PDF / Word document appear in cover mode.
+Reading mode retains the book’s text and supported illustrations. **It does not insert the cover paper’s title, abstract, or keywords.** EPUB, MOBI, and TXT share the same library, search, bookmarks, notes, and progress features. The built-in paper and your chosen PDF / Word document appear in cover mode.
 
-Keep original illustrations and captions, and click an illustration to enlarge it. The image button hides or restores EPUB images. Word cover documents have a separate image preference, so the two settings do not affect each other. After hiding images, changing typography, or repaginating, the reader restores your **source text position** instead of relying on a page number that may have changed. When only a full-page image is visible, it uses the nearest passage.
+Keep original illustrations and captions, and click an illustration to enlarge it. The image button hides or restores EPUB and MOBI images. Word cover documents have a separate image preference, so the two settings do not affect each other. After hiding images, changing typography, or repaginating, the reader restores your **source text position** instead of relying on a page number that may have changed. When only a full-page image is visible, it uses the nearest passage.
 
 The `»` menu also controls optional statistics and structure diagrams. Text distribution is computed from the source book’s Chinese characters / English words; the sequence diagram follows its chapter order. Captions explain what the diagrams represent. They do not invent experimental results. Image removal is unavailable for PDFs because their original layout is preserved.
+
+### Importing MOBI and TXT
+
+Use the open-file control, `Ctrl+O`, or drag and drop to import `.mobi` / `.txt` directly. No EPUB conversion is needed. These books support the same cover switching, typography, text search, bookmarks, and saved reading positions.
+
+TXT import detects UTF-8 and BOM-marked UTF-16 LE / BE, with a fallback for common Chinese GB18030 text. Titles such as `第一章`, `第12章`, or `Chapter 1` create a chapter outline. Text without recognized headings is read as one continuous document. HTML-like text is displayed literally, not executed as a webpage. Encoding and chapter conventions vary; if text appears garbled, save it as UTF-8 and import it again.
+
+MOBI import supports common DRM-free MOBI 6 / 7 books, embedded illustrations, and outlines, with uncompressed or PalmDOC-compressed content. Outlines use the book’s HTML table of contents or headings; navigation stored only in a binary NCX index is not imported. Hybrid MOBI files use their legacy rendition. Convert pure KF8, AZW3, or HUFF/CDIC-compressed books to EPUB first; DRM decryption is unavailable. Books are reflowed into A4 pages.
 
 ### Bookmarks, notes, and reading progress
 
 - Use the outline to reach a chapter or target passage. Local book links support chapters, footnotes, and endnotes. The back button or `Alt+←` returns to the reference.
 - Move between chapters, drag the progress slider, or revisit earlier navigation with back / forward. Progress percentages follow the current pagination.
 - Add a bookmark for the current position, or select text and choose the highlight-and-note action. Highlights support yellow, green, blue, and pink.
-- The notes panel supports searching, filtering, editing, and jumping to the source. Export Markdown notes or back up and restore JSON. Imports merge records for the same EPUB and retain existing local content with the same ID.
+- The notes panel supports searching, filtering, editing, and jumping to the source. Export Markdown notes or back up and restore JSON. Imports merge records for the same book and retain existing local content with the same ID.
 - Filter the library by title or author, then sort by recent reading, title, or date added. Resume after a refresh or after switching books.
 
 Each book supports up to 1,000 bookmarks and annotations. A selection may contain up to 12,000 characters, and JSON backups are limited to 20 MiB. Export backups regularly.
@@ -84,7 +92,7 @@ Printing handles the complete current document. Books and Word documents can be 
 | Keys | Action |
 | --- | --- |
 | `Q` | Switch between book and cover |
-| `Ctrl+O` | Open an EPUB |
+| `Ctrl+O` | Open an EPUB / MOBI / TXT |
 | `Ctrl+F` / `Ctrl+K` | Search the current document |
 | `Enter` / `Shift+Enter` | Next / previous search result |
 | `←` / `→`, `PageUp` / `PageDown` | Previous / next page |
@@ -102,7 +110,7 @@ Books and cover documents are parsed in the browser. **Files are not uploaded, a
 
 Files are stored in IndexedDB. Bookmarks, notes, text positions, reading preferences, image settings, and similar state use browser local storage. Keep using the **same browser profile and `http://127.0.0.1:5173` address** to retain access to your library. A different browser, private window, `localhost` address, or port uses a separate storage space. Clearing site data deletes the library and saved records, so retain your original files and exported annotation backups.
 
-The browser tab uses a neutral PDF filename by default. Document properties can adjust the filename and paper-style header information without replacing the EPUB’s text.
+The browser tab uses a neutral PDF filename by default. Document properties can adjust the filename and paper-style header information without replacing the book’s text.
 
 ## Run from source
 
@@ -127,17 +135,22 @@ On Windows, `start.vbs` also works from a source checkout. It serves the product
 
 ## Supported formats and limits
 
-- Common DRM-free EPUB 2 / EPUB 3 files: **80 MiB** per file and **250 MiB** after extraction.
+- Common DRM-free **EPUB 2 / EPUB 3, MOBI 6 / 7, and TXT** reading files: **80 MiB** per file. Expanded EPUB / MOBI content and generated TXT layout content are limited to **250 MiB**.
+- MOBI supports uncompressed / PalmDOC-compressed content and UTF-8 / Windows-1252 text; hybrid files use their legacy rendition. Pure KF8, `.azw` / `.azw3` / `.kfx` imports, and HUFF/CDIC compression are unsupported. Convert them to EPUB first.
+- TXT supports UTF-8, UTF-16 LE / BE with a BOM, and common Chinese GB18030 text. Its chapter outline is inferred from headings; custom chapter conventions may not be recognized.
 - Unencrypted PDF and `.docx` cover documents: **80 MiB** per file; Word extraction is limited to **250 MiB**. Convert older `.doc` files to `.docx` first.
-- EPUB content is reflowed into the document layout; complex CSS and fixed layouts may not match the original. Complex Word layouts, headers, footers, and manual page breaks may also differ.
-- No DRM decryption, ZIP64, split ZIP archives, document scripts, audio / video, or scanned-PDF OCR. Large image-heavy books may use substantial memory.
+- EPUB and MOBI content is reflowed into the document layout; complex CSS and fixed layouts may not match the original. Complex Word layouts, headers, footers, and manual page breaks may also differ.
+- No DRM decryption. EPUB / Word import does not support ZIP64 or split ZIP archives. Document scripts, audio / video, and scanned-PDF OCR are unsupported. Large image-heavy books may use substantial memory.
 - The Windows release is an x64 ZIP. Other systems can run the web reader from source; no macOS app bundle or standalone single-file `.exe` is currently provided.
 
 ## Project layout
 
 ```text
 src/PdfApp.tsx                 Reader, library, search, and mode switching
+src/lib/book-import.ts         Reading format detection and import
 src/lib/epub.ts                EPUB parsing, sanitization, and resources
+src/lib/mobi.ts                MOBI parsing and text / image conversion
+src/lib/txt.ts                 TXT encoding detection and chapter extraction
 src/lib/reading-document.ts    Isolation between books and paper templates
 src/lib/pagination.ts          A4 measurement and pagination
 src/lib/reading-position.ts    Source text anchors and position restoration

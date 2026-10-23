@@ -36,7 +36,8 @@ import {
   X,
 } from "lucide-react";
 import { paperDemoBook } from "./data/paper-demo";
-import { parseEpub, releaseBook } from "./lib/epub";
+import { releaseBook } from "./lib/epub";
+import { BOOK_FILE_ACCEPT, detectBookFormat, parseBook } from "./lib/book-import";
 import { listBooks, removeBook, saveBook, savePosition } from "./lib/storage";
 import { findHtmlMatches, highlightHtml } from "./lib/reading";
 import {
@@ -350,7 +351,7 @@ export default function PdfApp() {
         loadingRef.current = true;
         setImporting(true);
         try {
-          const parsed = await parseEpub(saved.file);
+          const parsed = await parseBook(saved.file, { format: saved.format, filename: saved.filename });
           if (cancelled) releaseBook(parsed);
           else {
             const storedPage = Number(get(`paper-pdf-position:${parsed.id}`));
@@ -914,7 +915,7 @@ export default function PdfApp() {
     loadingRef.current = true;
     setImporting(true);
     try {
-      const parsed = await parseEpub(saved.file);
+      const parsed = await parseBook(saved.file, { format: saved.format, filename: saved.filename });
       pendingReadingAnchor.current = readAnchor(parsed.id);
       const stored = Number(get(`paper-pdf-position:${parsed.id}`));
       desiredPage.current = stored > 0 ? stored - 1 : null;
@@ -930,8 +931,8 @@ export default function PdfApp() {
   };
   const importFile = async (file: File) => {
     if (loadingRef.current) return;
-    if (!file.name.toLowerCase().endsWith(".epub")) {
-      notify("请选择 EPUB 格式的文件。");
+    if (!detectBookFormat(file)) {
+      notify("请选择 EPUB、MOBI 或 TXT 格式的文件。");
       return;
     }
     saveCurrentProgress();
@@ -939,7 +940,7 @@ export default function PdfApp() {
     setImporting(true);
     setMenuOpen(false);
     try {
-      const parsed = await parseEpub(file);
+      const parsed = await parseBook(file);
       pendingReadingAnchor.current = readAnchor(parsed.id);
       const progress = readReadingProgress(parsed.id);
       desiredPage.current = progress?.page ?? 0;
@@ -953,6 +954,8 @@ export default function PdfApp() {
           id: parsed.id,
           title: parsed.title,
           author: parsed.author,
+          format: parsed.format,
+          filename: file.name,
           file,
           addedAt: Date.now(),
           chapterIndex: 0,
@@ -1172,10 +1175,10 @@ export default function PdfApp() {
     >
       <input
         type="file"
-        accept=".epub,application/epub+zip"
+        accept={BOOK_FILE_ACCEPT}
         ref={fileRef}
         className="sr-only"
-        aria-label="选择 EPUB 文件"
+        aria-label="选择 EPUB、MOBI 或 TXT 文件"
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (file) void importFile(file);
@@ -1300,7 +1303,7 @@ export default function PdfApp() {
           >
             <Search size={19} />
           </button>
-          <button className={`pdf-tool image-visibility-tool ${showImages ? "pressed" : ""}`} aria-label={showImages ? "隐藏图片" : "显示图片"} title={coverIsPdf ? "PDF 原始版式不支持去除图片" : showImages ? "隐藏 EPUB / Word 正文图片" : "显示 EPUB / Word 正文图片"} aria-pressed={showImages} disabled={imageToggleDisabled} onClick={toggleImages}>
+          <button className={`pdf-tool image-visibility-tool ${showImages ? "pressed" : ""}`} aria-label={showImages ? "隐藏图片" : "显示图片"} title={coverIsPdf ? "PDF 原始版式不支持去除图片" : showImages ? "隐藏原书 / Word 正文图片" : "显示原书 / Word 正文图片"} aria-pressed={showImages} disabled={imageToggleDisabled} onClick={toggleImages}>
             {showImages ? <ImageIcon size={18} /> : <ImageOff size={18} />}
           </button>
           <button className="pdf-tool optional-tool" aria-label="选择遮挡文档" title="选择遮挡文档（PDF / Word）" onClick={openCoverSettings}><FolderOpen size={18} /></button>
@@ -1425,7 +1428,7 @@ export default function PdfApp() {
               }}
             >
               <FolderOpen size={16} />
-              打开 EPUB 文件…<kbd>Ctrl O</kbd>
+              打开电子书…<kbd>Ctrl O</kbd>
             </button>
             <button
               role="menuitem"
@@ -1446,7 +1449,7 @@ export default function PdfApp() {
             {!concealed && <button role="menuitem" onClick={() => { setSidebarTab("marks"); setSidebar(true); setMenuOpen(false); }}><BookmarkPlus size={16} />书签与批注</button>}
             <button role="menuitem" onClick={openCoverSettings}><FolderOpen size={16} />选择遮挡文档…</button>
             <hr />
-            <button role="menuitemcheckbox" aria-checked={showImages} onClick={toggleImages} disabled={imageToggleDisabled}><span className="menu-check">{showImages ? "✓" : ""}</span>显示 EPUB / Word 正文图片</button>
+            <button role="menuitemcheckbox" aria-checked={showImages} onClick={toggleImages} disabled={imageToggleDisabled}><span className="menu-check">{showImages ? "✓" : ""}</span>显示原书 / Word 正文图片</button>
             <button
               role="menuitemcheckbox"
               aria-checked={autoCoverEnabled}
@@ -1581,7 +1584,7 @@ export default function PdfApp() {
                     disabled={importing}
                   >
                     <FolderOpen size={16} />
-                    打开 EPUB 文件
+                    打开 EPUB / MOBI / TXT
                   </button>
                   <div className="reader-library-controls">
                     <input type="search" aria-label="筛选书库" placeholder="按书名或作者查找" value={libraryQuery} onChange={event => setLibraryQuery(event.target.value)} />
@@ -1610,7 +1613,7 @@ export default function PdfApp() {
                         <FileText size={17} />
                         <span>
                           {saved.title}
-                          <small>{saved.author} · 已读 {Math.round(readReadingProgress(saved.id)?.percent ?? 0)}%</small>
+                          <small>{(saved.format || "epub").toUpperCase()} · {saved.author} · 已读 {Math.round(readReadingProgress(saved.id)?.percent ?? 0)}%</small>
                         </span>
                       </button>
                       <button
@@ -1623,9 +1626,9 @@ export default function PdfApp() {
                       </button>
                     </div>
                   ))}
-                  {!visibleLibrary.length && <p className="reader-library-empty">{library.length ? "没有找到匹配的书籍。" : "打开 EPUB 后会保存在这里，可随时继续阅读。"}</p>}
+                  {!visibleLibrary.length && <p className="reader-library-empty">{library.length ? "没有找到匹配的书籍。" : "打开电子书后会保存在这里，可随时继续阅读。"}</p>}
                   <p className="library-note">
-                    文件仅保存在此浏览器中。拖入 EPUB 也可打开。
+                    文件仅保存在此浏览器中。支持拖入 EPUB、MOBI 和 TXT。
                     <br />
                     Q 可临时切换到参考文档，再按一次返回。
                   </p>
@@ -1729,7 +1732,7 @@ export default function PdfApp() {
         <div className="pdf-drop-overlay">
           <FolderOpen size={40} />
           <strong>打开文档</strong>
-          <span>松开鼠标以载入 EPUB 文件</span>
+          <span>松开鼠标以载入 EPUB、MOBI 或 TXT 文件</span>
         </div>
       )}
       {coverSettingsOpen && (

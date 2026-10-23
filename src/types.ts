@@ -17,6 +17,8 @@ export interface BookTocItem {
   level: number;
 }
 
+export type BookFormat = "epub" | "mobi" | "txt";
+
 export interface Book {
   id: string;
   title: string;
@@ -31,6 +33,10 @@ export interface Book {
   imageCount: number;
   isDemo?: boolean;
   resourceUrls: string[];
+  /** Absent on legacy EPUBs and bundled demo documents. */
+  format?: BookFormat;
+  filename?: string;
+  sourceEncoding?: string;
 }
 
 export type Theme = "paper" | "sepia" | "dark";
@@ -48,4 +54,7 @@ export interface SavedBook {
   file: Blob;
   addedAt: number;
   chapterIndex: number;
+  /** Optional so existing IndexedDB EPUB records need no migration. */
+  format?: BookFormat;
+  filename?: string;
 }

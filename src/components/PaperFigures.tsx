@@ -153,7 +153,7 @@ export function PaperFigure({
         <span className="figure-number">图 S{chapterIndex + 1}</span>{" "}
         本书章节篇幅与阅读位置。字数按中文字符及英文单词统计；当前章节占全文约{" "}
         {percent}%。
-        <span className="figure-source">来源：本地 EPUB 解析 · 阅读辅助图</span>
+        <span className="figure-source">来源：本地电子书解析 · 阅读辅助图</span>
       </figcaption>
       <div className="figure-data" aria-label="图表数据摘要">
         <span>
@@ -241,7 +241,7 @@ export function StructureFigure({
           );
         })}
         <text x="340" y="177" textAnchor="middle" className="chart-tick">
-          {visible.length === 1 ? "本书章节" : "按 EPUB 原始阅读顺序排列"} ·
+          {visible.length === 1 ? "本书章节" : "按原书阅读顺序排列"} ·
           阴影为当前章节
         </text>
       </svg>

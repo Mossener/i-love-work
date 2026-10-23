@@ -290,13 +290,13 @@ function xml(source: string, error: string): Document {
   return document;
 }
 
-function readBlob(file: Blob): Promise<ArrayBuffer> {
+export function readBlob(file: Blob): Promise<ArrayBuffer> {
   if (typeof file.arrayBuffer === "function") return file.arrayBuffer();
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as ArrayBuffer);
     reader.onerror = () =>
-      reject(new Error("无法读取 EPUB 文件，请重新选择。"));
+      reject(new Error("无法读取电子书文件，请重新选择。"));
     reader.readAsArrayBuffer(file);
   });
 }
@@ -358,7 +358,7 @@ function validateZipSize(buffer: ArrayBuffer): void {
 }
 
 // Two independent 32-bit lanes provide a stable content key even without Web Crypto.
-function contentHash(bytes: Uint8Array): string {
+export function contentHash(bytes: Uint8Array): string {
   let first = 2166136261;
   let second = 0x9e3779b9;
   for (const byte of bytes) {
@@ -371,7 +371,7 @@ function contentHash(bytes: Uint8Array): string {
   );
 }
 
-function wordCount(text: string): number {
+export function wordCount(text: string): number {
   const han = text.match(/\p{Script=Han}/gu)?.length ?? 0;
   const words =
     text
@@ -380,7 +380,7 @@ function wordCount(text: string): number {
   return han + words;
 }
 
-function readableText(root: Node): string {
+export function readableText(root: Node): string {
   const parts: string[] = [];
   const stack: Array<Node | string> = Array.from(root.childNodes).reverse();
   while (stack.length) {
@@ -404,7 +404,7 @@ function readableText(root: Node): string {
 }
 
 /** Parse inside a template: untrusted resources stay inert until replaced below. */
-function sanitizedFragment(
+export function sanitizedFragment(
   source: string,
   svgOnly = false,
 ): { fragment: DocumentFragment; title: string } {

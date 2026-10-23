@@ -254,7 +254,7 @@ export function importMarks(json: string, bookId: string, existing: ReaderMark[]
   let input: { format?: unknown; version?: unknown; bookId?: unknown; marks?: unknown };
   try { input = JSON.parse(json); } catch { throw invalid(); }
   if (!input || typeof input !== "object" || input.format !== "paperleaf-marks" || input.version !== 1 || !Array.isArray(input.marks)) throw invalid();
-  if (input.bookId !== bookId) throw new Error("此备份不属于当前书籍，请先打开对应的 EPUB。");
+  if (input.bookId !== bookId) throw new Error("此备份不属于当前书籍，请先打开对应的电子书。");
   const incoming = normalizeMarks(input.marks);
   if (incoming.length !== input.marks.length) throw invalid();
   const ids = new Set(existing.map(mark => mark.id));
